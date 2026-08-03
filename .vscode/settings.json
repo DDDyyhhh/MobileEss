@@ -1,0 +1,21 @@
+{
+    "ROS2.distro": "humble",
+    "python.autoComplete.extraPaths": [
+        "/home/yh/mower_ws/build/mower_hardware",
+        "/home/yh/mower_ws/install/mower_hardware/lib/python3.10/site-packages",
+        "/home/yh/mower_ws/build/mower_coverage",
+        "/home/yh/mower_ws/install/mower_coverage/lib/python3.10/site-packages",
+        "/home/yh/mower_ws/install/fast_lio/local/lib/python3.10/dist-packages",
+        "/opt/ros/humble/lib/python3.10/site-packages",
+        "/opt/ros/humble/local/lib/python3.10/dist-packages"
+    ],
+    "python.analysis.extraPaths": [
+        "/home/yh/mower_ws/build/mower_hardware",
+        "/home/yh/mower_ws/install/mower_hardware/lib/python3.10/site-packages",
+        "/home/yh/mower_ws/build/mower_coverage",
+        "/home/yh/mower_ws/install/mower_coverage/lib/python3.10/site-packages",
+        "/home/yh/mower_ws/install/fast_lio/local/lib/python3.10/dist-packages",
+        "/opt/ros/humble/lib/python3.10/site-packages",
+        "/opt/ros/humble/local/lib/python3.10/dist-packages"
+    ]
+}

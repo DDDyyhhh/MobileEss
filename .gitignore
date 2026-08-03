@@ -1,0 +1,24 @@
+# Editor and local workspace data
+.vscode/*.db
+.vscode/*.db-*
+
+# Embedded build output
+**/build/
+**/.obj/
+**/Debug/
+**/Release/
+*.axf
+*.elf
+*.hex
+*.bin
+*.s19
+*.map
+*.o
+*.obj
+*.d
+*.su
+
+# Common generated logs and temporary files
+*.log
+*.tmp
+*~
