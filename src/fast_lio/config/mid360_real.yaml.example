@@ -1,0 +1,43 @@
+# Copy this file to the path passed to fast_lio_real.launch.py only after the
+# values below have been replaced by the field calibration record.
+# This example is documentation, not an executable runtime configuration.
+/**:
+  ros__parameters:
+    common.lid_topic: "/livox/lidar"
+    common.imu_topic: "/livox/imu"
+    common.time_sync_en: false
+    common.time_offset_lidar_to_imu: 0.0
+    publish.tf_en: false
+    publish.path_en: true
+    publish.effect_map_en: false
+    publish.map_en: false
+    publish.scan_publish_en: false
+    publish.dense_publish_en: false
+    publish.scan_bodyframe_pub_en: false
+    preprocess.lidar_type: 1
+    preprocess.scan_line: 4
+    preprocess.blind: 0.1
+    preprocess.point_filter_num: 1
+    preprocess.timestamp_unit: 3
+    preprocess.scan_rate: 10
+    mapping.extrinsic_est_en: false
+    # These are LiDAR -> FAST-LIO IMU coordinates, not body -> livox_frame.
+    # Replace every value from the calibration record before running.
+    mapping.extrinsic_T: [REPLACE_TX, REPLACE_TY, REPLACE_TZ]
+    mapping.extrinsic_R: [REPLACE_R00, REPLACE_R01, REPLACE_R02,
+                          REPLACE_R10, REPLACE_R11, REPLACE_R12,
+                          REPLACE_R20, REPLACE_R21, REPLACE_R22]
+    max_iteration: 3
+    point_filter_num: 1
+    filter_size_corner: 0.5
+    filter_size_surf: 0.15
+    filter_size_map: 0.15
+    cube_side_length: 200.0
+    mapping.det_range: 300.0
+    mapping.fov_degree: 360.0
+    mapping.gyr_cov: 0.1
+    mapping.acc_cov: 0.1
+    mapping.b_gyr_cov: 0.0001
+    mapping.b_acc_cov: 0.0001
+    pcd_save.pcd_save_en: false
+    pcd_save.interval: -1

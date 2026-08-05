@@ -1,0 +1,77 @@
+# FAST-LIO 配置 — 实机 Livox Mid-360 (内置 IMU)
+# 适用于真实硬件环境 (ROS2 参数格式，配合 livox_ros_driver2 使用)
+/**:
+  ros__parameters:
+    # ===== 常规参数 =====
+    common.lid_topic: "/livox/lidar"     # 实机 Mid-360 点云话题 (CustomMsg 格式)
+    common.imu_topic: "/livox/imu"       # 实机 Mid-360 内置 IMU 话题
+    common.odom_frame: "odom"             # FAST-LIO 局部连续坐标系
+    common.body_frame: "livox_imu"        # FAST-LIO 状态原点为 Mid-360 内置 IMU
+    common.odometry_topic: "/fast_lio/odometry"
+    common.time_sync_en: false           # 实机硬件已对齐时间戳，设为 false
+    common.time_offset_lidar_to_imu: 0.0
+    common.extrinsic_est_en: false       # 内置 IMU 外参固定，关闭在线估计
+
+    # ===== 发布选项 =====
+    publish.path_en: true
+    publish.effect_map_en: false
+    publish.map_en: true
+    publish.scan_publish_en: true
+    publish.dense_publish_en: true
+    publish.scan_bodyframe_pub_en: true
+    publish.tf_en: false              # 后续由定位 EKF 唯一发布 odom -> base_link
+
+    # ===== 预处理 =====
+    preprocess.lidar_type: 1           # 1 = Livox 系列雷达 (CustomMsg)
+    preprocess.scan_line: 4            # Mid-360 物理线数为 4 线
+    preprocess.blind: 0.1              # 盲区：实机设为 0.1m (仿真原 4.0m 会裁掉近处点云)
+    preprocess.point_filter_num: 3     # 点云降采样
+    preprocess.timestamp_unit: 3       # 3 = NS (纳秒)，livox_ros_driver2 默认单位
+    preprocess.scan_rate: 10
+
+    # ===== 外参 LiDAR→IMU (Mid-360 内置 IMU 官方出厂固定参数) =====
+    mapping.extrinsic_T: [-0.011, -0.02329, 0.04412]   # 雷达光学中心到内置 IMU 偏移(m)
+    mapping.extrinsic_R: [1.0, 0.0, 0.0,
+                          0.0, 1.0, 0.0,
+                          0.0, 0.0, 1.0]
+
+    # ===== 建图滤波 =====
+    filter_size_corner: 0.5
+    filter_size_surf: 0.15
+    filter_size_map: 0.15
+    cube_side_length: 1000.0
+
+    # ===== 建图参数 =====
+    mapping.det_range: 100.0           # 实机测距范围 (实机推荐 100.0m，仿真原 300m)
+    mapping.fov_degree: 360.0          # Mid-360 水平 FOV 为 360 度 (仿真原 180°)
+    mapping.gyr_cov: 0.1
+    mapping.acc_cov: 0.1
+    mapping.b_gyr_cov: 0.0001
+    mapping.b_acc_cov: 0.0001
+    mapping.imu_gyro_noise: 0.0001
+    mapping.imu_acc_noise: 0.01
+    mapping.imu_gyro_bias_noise: 0.000001
+    mapping.imu_acc_bias_noise: 0.0001
+    maximum_iteration: 3
+    minimum_uncertainty: 0.001
+    imu_time_shift: 0.0
+    cut_frame_num: 10000
+    com_cov: 0.1
+
+    # ===== 其他 =====
+    point_filter_num: 3
+    feature_extract_enable: false      # Mid-360 稠密扫描，关闭特征提取
+    runtime_pos_log_enable: false
+    map_file_path: ""
+    maximum_inc_meas: 2000
+    publish_effect_world: false
+    publish_effect_world_resolution: 0.05
+    runtime_dump_en: false
+    if_dump_seq: false
+    if_record_offline_map: false
+    online_map_resolution: 0
+    filter_offboard: false
+
+    # ===== PCD 保存 =====
+    pcd_save.pcd_save_en: false
+    pcd_save.interval: -1
