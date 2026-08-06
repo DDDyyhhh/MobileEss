@@ -6,7 +6,7 @@
     common.lid_topic: "/livox/lidar"     # 实机 Mid-360 点云话题 (CustomMsg 格式)
     common.imu_topic: "/livox/imu"       # 实机 Mid-360 内置 IMU 话题
     common.odom_frame: "odom"             # FAST-LIO 局部连续坐标系
-    common.body_frame: "livox_imu"        # FAST-LIO 状态原点为 Mid-360 内置 IMU
+    common.body_frame: "livox_frame"      # 与 Livox 驱动的内置 IMU frame 保持一致
     common.odometry_topic: "/fast_lio/odometry"
     common.time_sync_en: false           # 实机硬件已对齐时间戳，设为 false
     common.time_offset_lidar_to_imu: 0.0

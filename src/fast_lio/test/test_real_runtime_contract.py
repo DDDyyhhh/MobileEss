@@ -48,11 +48,11 @@ def test_real_odometry_interface_is_parameterized_for_ekf_input():
     assert "create_publisher<nav_msgs::msg::Odometry>(odometry_topic" in source
     assert '"publish_tf",\n                default_value="false"' in launch
     assert 'common.odom_frame: "odom"' in config
-    assert 'common.body_frame: "livox_imu"' in config
+    assert 'common.body_frame: "livox_frame"' in config
     assert 'common.odometry_topic: "/fast_lio/odometry"' in config
     assert "publish.tf_en: false" in config
     assert 'DeclareLaunchArgument("odom_frame", default_value="odom")' in launch
-    assert 'DeclareLaunchArgument("body_frame", default_value="livox_imu")' in launch
+    assert 'DeclareLaunchArgument("body_frame", default_value="livox_frame")' in launch
     assert '"common.odom_frame": LaunchConfiguration("odom_frame")' in launch
     assert '"common.body_frame": LaunchConfiguration("body_frame")' in launch
 
@@ -89,4 +89,4 @@ def test_default_mapping_launch_uses_the_checked_in_real_mid360_config():
     assert 'common.lid_topic: "/livox/lidar"' in config
     assert 'common.imu_topic: "/livox/imu"' in config
     assert 'common.odom_frame: "odom"' in config
-    assert 'common.body_frame: "livox_imu"' in config
+    assert 'common.body_frame: "livox_frame"' in config

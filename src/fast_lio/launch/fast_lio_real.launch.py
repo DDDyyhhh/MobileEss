@@ -26,7 +26,7 @@ def generate_launch_description() -> LaunchDescription:
             ),
             DeclareLaunchArgument("use_sim_time", default_value="false"),
             DeclareLaunchArgument("odom_frame", default_value="odom"),
-            DeclareLaunchArgument("body_frame", default_value="livox_imu"),
+            DeclareLaunchArgument("body_frame", default_value="livox_frame"),
             DeclareLaunchArgument(
                 "odometry_topic", default_value="/fast_lio/odometry"
             ),

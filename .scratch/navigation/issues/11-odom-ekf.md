@@ -1,7 +1,7 @@
 # 用 LIO、IMU、轮速 twist 输出 odom→base_link。
 
 Type: task
-Status: needs-triage
+Status: resolved
 Blocked by: 05、06
 
 ## 目的
@@ -36,6 +36,15 @@ TF 跳变或车辆异常立即停驶并保存 bag。
 - 关键 topic/TF/CAN 记录；
 - 必要时保存 rosbag、RViz2 截图、照片或视频；
 - 记录实际数值与阈值对照。
+
+现场验证记录（2026-08-06）：
+
+- `mcu_can_bridge` 接收 `can0` 的 `0x50A`，`valid_frames` 持续递增，`malformed_frames=0`、`dropped_frames=0`；
+- `/wheel/odometry/twist` 发布 `base_link` frame，实测约 `15.3 Hz`，静态架空测试 `linear.x=1.1575 m/s`，`angular.z` 接近零；
+- `robot_localization` EKF 输出 `odom -> base_link`，频率约 `30.2 Hz`；
+- `view_frames` 验证拓扑为 `odom -> base_link -> livox_frame`；
+- `tf2_echo odom base_link` 连续稳定，无跳变；
+- 静态架空车辆测试通过；动态行驶验收仍属于后续现场测试。
 
 ## 通过阈值
 EKF、TF、三类动作和轮速失效行为可回放。

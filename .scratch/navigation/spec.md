@@ -49,7 +49,7 @@
 
 - 四驱差速；
 - 实心轮径 `0.24 m`；
-- 物理轮距 `0.64 m`；
+- 物理轮距 `0.690 m`（左右轮胎接触面中心线距离）；
 - 减速比 `4.43`；
 - OID 极对数 `10`。
 
@@ -123,7 +123,7 @@ earth → map → odom → base_link
 - MCU 能查询 OID 四个行走电机的实时电转速；
 - MCU 能按确定参数输出 `0x50A` 四轮实际线速度；
 - RK3588 能解析 `0x50A`，计算左右侧平均速度；
-- `mcu_can_bridge` 发布标准 `nav_msgs/msg/Odometry`，只使用 `twist.linear.x` 和 `twist.angular.z`；
+- `mcu_can_bridge` 发布标准 `geometry_msgs/msg/TwistWithCovarianceStamped`，只使用 `twist.linear.x` 和 `twist.angular.z`；
 - `pose` 不作为轮速定位输入；
 - `0x50A` 连续超过约 `150 ms` 未收到时暂时停用轮速观测，不用零值或上一帧伪造；
 - 轮速恢复后连续收到正常帧再恢复融合。

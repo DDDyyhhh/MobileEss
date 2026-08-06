@@ -31,7 +31,7 @@
 | 08 | [建图数据采集](issues/08-mapping-data-capture.md) | task | needs-triage | 02, 06, 07 |
 | 09 | [双地图生成清理](issues/09-build-clean-maps.md) | task | needs-triage | 08 |
 | 10 | [地图资产固化](issues/10-freeze-map-assets.md) | task | needs-triage | 07, 09 |
-| 11 | [odom-base_link EKF](issues/11-odom-ekf.md) | task | needs-triage | 05, 06 |
+| 11 | [odom-base_link EKF](issues/11-odom-ekf.md) | task | resolved | 05, 06 |
 | 12 | [map-odom 匹配](issues/12-map-odom-matching.md) | task | needs-triage | 06, 07, 10, 11 |
 | 13 | [自动初始化定位门禁](issues/13-localization-startup-gate.md) | task | needs-triage | 10, 12 |
 | 14 | [定位退化行为](issues/14-localization-degradation.md) | task | needs-triage | 12, 13 |
