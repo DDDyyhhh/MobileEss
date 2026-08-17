@@ -748,8 +748,9 @@ void Control_Update(void)
             return;
         }
 
-        // 3. 正常执行 API 运动指令
-        set_chassis_velocity(host_vx, host_vy, host_omega);
+        // The installed OID motor directions invert the kinematic yaw helper.
+        // Preserve ROS +angular.z = left turn without changing RC steering.
+        set_chassis_velocity(host_vx, host_vy, -host_omega);
     }
 
     chassis_control_req_motor_data();

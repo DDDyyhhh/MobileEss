@@ -10,7 +10,8 @@ setup(
     data_files=[
         ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
-        ('share/' + package_name + '/config', ['config/local_ekf.yaml']),
+        ('share/' + package_name + '/config', [
+            'config/local_ekf.yaml', 'config/global_localization.yaml']),
         ('share/' + package_name + '/launch', ['launch/localization.launch.py']),
     ],
     install_requires=['setuptools'],
@@ -20,6 +21,7 @@ setup(
     entry_points={
         'console_scripts': [
             'mcu_can_bridge = mcu_can_bridge.mcu_can_bridge:main',
+            'cmd_vel_can_bridge = mcu_can_bridge.cmd_vel_can_bridge:main',
         ],
     },
 )

@@ -2,11 +2,38 @@
 
 from __future__ import annotations
 
+import math
 from typing import Tuple
 
 
 WHEEL_FEEDBACK_CAN_ID = 0x50A
 WHEEL_FEEDBACK_DLC = 8
+
+
+def localization_is_accepted(message: str) -> bool:
+    """Return whether the fixed-map localizer reports an accepted alignment."""
+    return message == 'accepted'
+
+
+def remote_takeover_detected(api_was_running: bool, api_state: int) -> bool:
+    """Detect an STM32 API-state drop after the bridge owned API run."""
+    return api_was_running and api_state != 2
+
+
+def requested_api_state(api_was_running: bool, reported_state: int) -> int:
+    """Keep API run requested after status telemetry briefly goes stale."""
+    if api_was_running:
+        return 2
+    return 1 if reported_state not in (1, 2) else 2
+
+
+def quantize_command_speed(value: float, limit: float) -> int:
+    """Quantize and clamp a velocity for STM32's signed 0.1-unit field."""
+    if limit <= 0.0 or limit > 1.0:
+        raise ValueError('limit must be within the STM32 1.0-unit API range')
+    if not math.isfinite(value):
+        return 0
+    return max(-int(limit * 10), min(int(limit * 10), int(round(value * 10))))
 
 
 def parse_wheel_feedback(data: bytes) -> Tuple[int, int, int, int]:

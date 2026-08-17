@@ -48,7 +48,7 @@ STM32 源码实际使用的 CAN 时序为 APB1=42 MHz、Prescaler=6、BS1=9TQ、
 | 0 | `ctrl_mode` | `uint8` | `0`、`1`、`2` | API 状态机命令 |
 | 1 | `vx_raw` | `int8` | `vx = vx_raw * 0.1` m/s | 前进速度；正值为前进，负值为后退 |
 | 2 | `vy_raw` | `int8` | 当前忽略 | 差速底盘不支持侧向速度，固定填 `0` |
-| 3 | `omega_raw` | `int8` | `omega = omega_raw * 0.1` rad/s | 角速度；正负方向以现场坐标系标定为准 |
+| 3 | `omega_raw` | `int8` | `omega = omega_raw * 0.1` rad/s | ROS 约定：正值为左转，负值为右转 |
 | 4 | `blade_level` | `uint8` | `0` 到 `3` | 割刀挡位 |
 | 5 | `lifter_level` | `uint8` | `1` 到 `5` | 刀盘高度挡位；越界值会被钳位 |
 | 6 | `bag_target` | `uint8` | `0` 或非 `0` | `0` 请求关闭草袋，非 `0` 请求打开草袋 |
@@ -82,6 +82,10 @@ vx_mps      = int8(Byte1) * 0.1
 omega_rad_s = int8(Byte3) * 0.1
 vy_mps      = 0
 ```
+
+当前 OID 电机安装方向使内部运动学函数的旋转项反向。STM32 在 API 执行
+边界对该项取反，因此 `omega_raw > 0` 的实际车辆运动仍为 ROS 定义的左转。
+`0x507` 保留上位机原始命令回显，不是实际轮速。
 
 当前工程注释约定的推荐范围为：
 

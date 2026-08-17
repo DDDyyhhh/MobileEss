@@ -1,0 +1,65 @@
+navsat_transform_node:
+  ros__parameters:
+    frequency: 30.0
+    delay: 0.0
+    transform_timeout: 0.1
+    magnetic_declination_radians: 0.0
+    yaw_offset: 0.0
+    zero_altitude: false
+    broadcast_utm_transform: false
+    publish_filtered_gps: false
+    # The local EKF yaw may only be used after the fixed map is calibrated to
+    # the earth frame. Mid-360 IMU does not provide an absolute heading.
+    use_odometry_yaw: false
+    wait_for_datum: true
+
+/global/global_ekf_filter_node:
+  ros__parameters:
+    frequency: 30.0
+    sensor_timeout: 0.20
+    two_d_mode: true
+    # Do not publish map -> odom from this RTK-only filter. The Aug 10 static
+    # and dynamic replay showed frame-feedback divergence through /odometry/gps.
+    # A future map-matching owner must publish this transform after validation.
+    publish_tf: false
+    print_diagnostics: true
+    map_frame: map
+    odom_frame: odom
+    base_link_frame: base_link
+    world_frame: map
+
+    # This filter publishes an auxiliary global Odometry estimate only. Its
+    # local velocity is useful between RTK fixes, but is not an absolute yaw
+    # observation and must not be used to publish map -> odom.
+    odom0: /odometry/filtered
+    odom0_config: [false, false, false,
+                   false, false, false,
+                   true, false, false,
+                   false, false, true,
+                   false, false, false]
+    odom0_differential: false
+    odom0_relative: false
+    odom0_queue_size: 10
+
+    # navsat_transform_node publishes this ENU position only for accepted,
+    # covariance-bearing RTK-fixed NavSatFix messages.
+    odom1: /odometry/gps
+    odom1_config: [true, true, false,
+                   false, false, false,
+                   false, false, false,
+                   false, false, false,
+                   false, false, false]
+    odom1_differential: false
+    odom1_relative: false
+    odom1_queue_size: 10
+    odom1_pose_rejection_threshold: 3.0
+
+    imu0: /rtk/heading
+    imu0_config: [false, false, false,
+                  false, false, true,
+                  false, false, false,
+                  false, false, false,
+                  false, false, false]
+    imu0_differential: false
+    imu0_relative: false
+    imu0_queue_size: 10
