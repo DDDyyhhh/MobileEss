@@ -1,0 +1,186 @@
+map_id: parking_lot_2026-08-10_v2
+created_at_utc: "2026-08-10T08:36:56Z"
+operator: cat
+pcd_path: /var/lib/mower/maps/parking_lot_2026-08-10_v2/map.pcd
+pcd_sha256: "76ea96b69cbdf5862f06ed51a7a37902f12b0a239442907d8c5a48f0bdd13c3d"
+coordinate_frame: map_capture_odom
+map_origin_description: FAST-LIO initialization pose for this capture; not earth aligned
+lidar: Livox Mid-360
+fast_lio_config: /etc/mower/fast_lio/config/mid360_real.yaml
+lidar_to_imu_extrinsics_record: >-
+  FAST-LIO mapping.extrinsic_T [-0.011, -0.02329, 0.04412] m and identity
+  mapping.extrinsic_R for the Mid-360 internal IMU; verify the deployed config
+  content before map release
+base_link_to_livox_frame_m: [0.17, 0.0, 0.48]
+base_link_to_livox_frame_source: operator_measurement_2026-08-11
+base_link_to_rtk_reference_m: [-0.17, -0.325, 0.70]
+base_link_to_rtk_reference_description: Ant1 primary right-side measurement
+rtk_status_during_capture: RTK Fixed required; record bag path below
+rosbag_path: /home/cat/rosbags/fixed_map_static_2026-08-10_v2/recheck
+dynamic_recheck_rosbag_path: /home/cat/rosbags/fixed_map_dynamic_2026-08-10_v2/candidate_constrained_recheck
+tf_continuity_recheck_rosbag_path: /home/cat/rosbags/fixed_map_dynamic_2026-08-10_v2/candidate_tf_continuity_recheck
+weather_and_site_conditions: not recorded
+coverage_route: boundaries, lanes, start_area, goals, turns, repeat_feature_areas
+acceptance_status: controlled_nav2_integration_test_approved
+parking_task_acceptance:
+  scope: general_parking
+  position_tolerance_m: 0.10
+  yaw_tolerance_deg: 7.0
+  yaw_is_soft_preference: true
+  chalk_closure_position_error_m: 0.05366
+  chalk_closure_yaw_error_deg: 4.414
+  result: pass
+notes: >-
+  Vehicle returned to map-capture start pose before saving. The initial static
+  observation bag omitted /cloud_registered and /fixed_map_localization/odometry.
+  The corrected recheck bag is 252.035 s with 2512 cloud and FAST-LIO messages,
+  239 ICP outputs, fitness 0.014688-0.019772, candidate spans of 0.014216 m x,
+  0.011843 m y, and 0.048 deg yaw, 117 RTK quality-4 fixes, connected NTRIP,
+  and zero wheel speed. The first 272.160 s dynamic candidate bag provided 260
+  continuous ICP outputs but did not pass the TF enable gate. Fitness reached
+  0.29972 with four outputs above 0.10, point-turn vibration caused a 0.1809 m
+  candidate step, and repeated vertical corrections reached 0.2886 m per step.
+  The candidate returned close to its starting alignment, RTK/NTRIP remained
+  stable, and no map -> odom TF was published. A smoother repeat that also
+  records /odometry/filtered and covers the same independent route is required.
+  The 687.096 s smooth repeat reduced peak speed to 0.908 m/s, strong point-turn
+  time to 1.83 s, and moving vibration, but /fast_lio/odometry and
+  /cloud_registered were absent and fixed-map ICP published zero messages. The
+  local EKF yaw drifted 54.6 deg during the initial 150 s stationary interval
+  without LIO pose correction. NTRIP recovered from two late disconnections. A
+  third recording is required after all four localization topics pass a
+  stationary rate and content preflight. The complete 442.860 s third recording
+  contained FAST-LIO, registered cloud, local EKF, and 419 ICP outputs. Smooth
+  driving, FAST-LIO/EKF continuity, RTK/NTRIP, TF ownership, and start/end
+  closure passed, but ICP still produced six fitness values above 0.10, 17
+  vertical steps above 0.10 m with a 0.263 m maximum, and a 0.131 m planar step.
+  Fitness was effectively uncorrelated with vertical step magnitude. Further
+  recording with the same six-degree-of-freedom localizer is not useful; ground
+  vehicle constraints and per-update motion gates require implementation and
+  replay validation before another live candidate test. The Mid-360 static TF
+  was corrected from [0.35, 0.0, 0.45] to the operator measurement [0.17, 0.0,
+  0.48]. The initial RTK measurement was the dual-antenna center at [-0.17,
+  0.0, 0.70]. Follow-up measurement confirmed Ant1 on the right at [-0.17,
+  -0.325, 0.70], and the localization launch defaults now use that Ant1
+  transform when global localization is explicitly enabled.
+  The constrained localizer now recomputes fitness after applying the planar
+  constraint, bounds first alignment to 1.0 m and 30 deg from its initial guess,
+  and validates positive runtime parameters. Isolated equivalent-timing replay
+  produced 395 outputs, constrained fitness at or below 0.09917, fixed z, a
+  0.0792 m maximum planar step, and no accepted update above either configured
+  fitness or planar motion threshold.
+  The live constrained recheck is stored at
+  /home/cat/rosbags/fixed_map_dynamic_2026-08-10_v2/candidate_constrained_recheck
+  (the requested name included a trailing "1", but the created directory did
+  not). It is a 92.895 s complete bag with 87 constrained ICP outputs. The
+  vehicle crossed a roughly 3 deg slope near the final parking area; FAST-LIO
+  pitch changed by roughly 5-6 deg there, while constrained map->odom kept
+  z=-0.0111 m, roll=-2.0895 deg, and pitch=1.4974 deg fixed.
+  The final 85.128 s TF continuity recheck produced 80 ICP outputs with intervals
+  0.966-1.136 s, fitness 0.01847-0.03300, maximum planar step 0.01367 m, no
+  constrained z/roll/pitch motion, and stable RTK/NTRIP. It passed candidate
+  continuity and permits a publish_tf=true observation only; Nav2 and autonomous
+   motion remain blocked until unique TF ownership and RTK/NTRIP loss-recovery
+   behavior are observed. The first 172.788 s publish_tf=true observation is at
+   /home/cat/rosbags/fixed_map_tf_publish_2026-08-10_v2/observation. It recorded
+   163 constrained ICP candidates and 164 map->odom TF transforms; every
+   candidate had an exactly matching TF transform, no duplicate transform stamp
+   conflicted, fitness was 0.02002-0.06068, maximum planar step was 0.07478 m,
+   z was fixed, and local EKF/FAST-LIO remained continuous. RTK fixes were all
+   quality 4 and NTRIP remained connected with no diagnostic error. However, one
+   candidate and map->odom interval was 2.20003 s, exceeding the 1.2 s TF
+   continuity requirement. Repeat the controlled TF-publish observation after
+   diagnosing that missed localizer cycle. Nav2 and autonomous motion remain
+   blocked; NTRIP loss/recovery behavior is also still unobserved. With every
+   RK3588 CPU core locked to the performance governor, the 179.732 s repeat at
+   /home/cat/rosbags/fixed_map_tf_publish_2026-08-10_v2/observation_repeat
+   recorded 168 candidates and exactly matching map->odom TF transforms. Fitness
+   was 0.01932-0.06120, the maximum planar step was 0.07010 m, z remained fixed,
+   FAST-LIO and the local EKF were continuous, all 56 RTK fixes had quality 4,
+   and NTRIP remained connected without error. It nevertheless had one 2.09994 s
+   candidate/map->odom interval, exceeding the 1.2 s requirement. The recurring
+   gap despite CPU locking is consistent with the localizer consuming a 1 Hz
+   update slot when an ICP or motion-gate update is rejected, then publishing no
+   transform because it only publishes accepted estimates. Add rejection
+   observability and a bounded heartbeat for the last accepted transform before
+   another TF-publish acceptance recording. Nav2 and autonomous motion remain
+   blocked; NTRIP loss/recovery behavior is also still unobserved. The localizer
+   implementation now provides a 5 Hz map->odom heartbeat only after the first
+   accepted ICP alignment and reports cumulative rejection counters on
+   /fixed_map_localization/diagnostics. It must pass isolated replay and a new
+   controlled TF-publish observation before this status can advance. The first
+   108.423 s heartbeat observation is at
+   /home/cat/rosbags/fixed_map_tf_publish_2026-08-10_v2/observation_heartbeat.
+   It recorded 102 accepted ICP candidates, 644 map->odom transforms, and 103
+   localizer diagnostics. All candidate transforms matched TF exactly; the 5 Hz
+   heartbeat produced a maximum TF arrival interval of 0.20242 s and no gap
+   above 1.2 s. Candidate fitness was 0.02095-0.04097, maximum planar step was
+   0.02383 m, z remained fixed, FAST-LIO/local EKF remained continuous, RTK was
+   quality 4, and NTRIP remained connected without error. Diagnostics recorded
+   one raw ICP rejection and zero constrained-fitness, motion-gate, initial-gate,
+   or heartbeat-stale events, demonstrating retained-transform continuity during
+   a rejected update. The recording exposed one 0.24609 s TF header timestamp
+   regression caused by accepted ICP TF using source-cloud time after a current
+   time heartbeat; source now stamps accepted TF at publication time while
+   retaining source-cloud time on candidate odometry. Rebuild and repeat
+   isolated/live validation. The composed map->base_link start/end change was
+   0.2664 m with -2.481 deg yaw, so the claimed left final parking offset is not
+   accepted as a minor closure error without independent surveyed or RViz
+   comparison. Nav2/autonomous motion remain blocked; RTK/NTRIP loss-recovery
+   behavior is also still unobserved. The timestamp-fix and chalk closure bag is
+   /home/cat/rosbags/fixed_map_tf_publish_2026-08-10_v2/observation_closure.
+   It is 117.698 s with 110 candidates, 701 map->odom transforms, 111 localizer
+   diagnostics, and a complete FAST-LIO/local-EKF/RTK chain. The 5 Hz heartbeat
+   had a 0.20092 s maximum arrival interval, zero gaps above 1.2 s, and zero TF
+   header timestamp regressions. Candidate fitness was 0.01799-0.03326, maximum
+   planar step was 0.04374 m, z remained fixed, FAST-LIO/local EKF were
+   continuous, RTK fixes were quality 4, and NTRIP stayed connected without
+   error. Diagnostics recorded one raw ICP rejection and no constrained-fitness,
+   motion-gate, initial-gate, or heartbeat-stale event; the heartbeat bridged the
+   rejected ICP update. Physical chalk marks produced a map->base_link position
+   closure of 0.05366 m (-0.02070 m x, +0.04950 m y). Final yaw closure was
+   +4.414 deg, which requires an explicit parking-heading tolerance or a repeat
+   if final orientation is a task constraint. Nav2/autonomous motion remain
+   blocked pending heading acceptance and RTK/NTRIP loss-recovery observation.
+   The claimed RTK recovery bag is
+   /home/cat/rosbags/fixed_map_tf_publish_2026-08-10_v2/observation_rtk_recovery.
+   It is a 171.467 s complete steady-state pass with 163 candidates, 1021
+   map->odom TF transforms, candidate intervals 0.99799-1.10296 s, TF maximum
+   arrival/header intervals 0.20585/0.20108 s, no TF timestamp regression,
+   fitness 0.01778-0.02747, maximum planar step 0.00919 m, fixed z, continuous
+   FAST-LIO/local EKF, and 75 quality-4 RTK fixes. NTRIP was connected with an
+   empty error throughout. It does not demonstrate loss and recovery:
+   ntrip_connected never became false, ntrip_session_sec increased monotonically
+   from about 734 to 905 seconds without reset, and reconnects=1 was already the
+   initial cumulative value. Do not advance the RTK/NTRIP recovery gate from
+   this bag. Record an explicit disconnect diagnostic/session reset and its
+   recovery while checking map->odom continuity and absence of heartbeat_stale.
+   The real correction-stream interruption bag is
+   /home/cat/rosbags/fixed_map_tf_publish_2026-08-10_v2/observation_rtk_disconnect_recheck.
+   It is 267.482 s with 252 candidates, 1589 map->odom transforms, and a
+   complete localization/RTK chain. TF remained continuous with a 0.22467 s
+   maximum arrival interval, zero gap above 1.2 s, and no timestamp regression;
+   fitness was 0.01752-0.03426, maximum planar step was 0.02632 m, z remained
+   fixed, localizer diagnostics had two raw ICP rejections but no heartbeat stale
+   event, FAST-LIO/local EKF remained continuous, and all 106 RTK fixes were
+   quality 4. RTCM session bytes froze for two injected intervals of about 70.0
+   and 42.0 seconds, proving correction delivery stopped without affecting
+   map->odom. The prior NTRIP client failed to expose this: ntrip_connected stayed
+   true, last_error stayed empty, and reconnects did not increase because socket
+   read timeouts were treated as indefinitely normal. It does not clear the
+   recovery gate. mobileess_rtk now uses ntrip_rtcm_timeout_sec=3.0 and publishes
+   ntrip_rtcm_age_sec, forcing a disconnect/reconnect path when corrections stop.
+   The post-timeout recheck is
+   /home/cat/rosbags/fixed_map_tf_publish_2026-08-10_v2/observation_rtk_disconnect_recovery.
+   It is 216.613 s with 205 candidates, 1285 map->odom TF transforms, a maximum
+   TF arrival/header interval of 0.20211/0.20111 s, no timestamp regression or
+   TF gap above 1.2 s, fitness 0.01591-0.03564, maximum planar step 0.01687 m,
+   fixed z, continuous FAST-LIO/local EKF, and no heartbeat stale event. The
+   injected correction loss triggered NTRIP correction stream timed out;
+   diagnostics observed true->false->true->false->true, reconnects 1->2->3, and
+   two NTRIP session resets. The final recovered session produced 73 quality-4
+   fixes and cleared last_error. No map->odom jump occurred during either loss or
+   recovery. This clears the RTK/NTRIP recovery gate. The recovery route's final
+   map->base_link change was 0.08565 m and -0.822 deg, but it was not declared a
+   chalk-mark heading closure. Nav2/autonomous parking still requires an explicit
+   final heading tolerance or a heading-mark repeat meeting that tolerance.

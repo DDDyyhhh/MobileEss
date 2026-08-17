@@ -1,0 +1,20 @@
+map_id: parking_lot_2026-08-10_v1
+created_at_utc: "2026-08-10T07:03:12Z"
+operator: cat
+pcd_path: /var/lib/mower/maps/parking_lot_2026-08-10_v1/map.pcd
+pcd_sha256: "345f1ca780c3eb047b9031d33e180cabfa06cdb0b5763dd8907a06b0714d8c97"
+coordinate_frame: map_capture_odom
+map_origin_description: FAST-LIO initialization pose for this capture; not earth aligned
+lidar: Livox Mid-360
+fast_lio_config: /etc/mower/fast_lio/config/mid360_real.yaml
+lidar_to_imu_extrinsics_record: REPLACE_WITH_CALIBRATION_REFERENCE
+base_link_to_livox_frame_m: [0.35, 0.0, 0.45]
+rtk_status_during_capture: RTK Fixed required; record bag path below
+rosbag_path: /home/cat/rosbags/parking_lot_2026-08-10_v1/mapping_capture
+weather_and_site_conditions: not recorded
+coverage_route: boundaries, lanes, start_area, goals, turns, repeat_feature_areas
+acceptance_status: pcd_capture_verified_pending_map_localization
+notes: >-
+  map_save succeeded; PCD is 26 MiB. Capture duration 270.796 s with 2707
+  Livox scans, 54161 IMU messages, 81 RTK Fixed fixes, and 15 dual-antenna
+  heading messages. earth-to-map alignment and fixed-map localization remain pending.
