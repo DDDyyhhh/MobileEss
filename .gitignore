@@ -22,3 +22,7 @@
 *.log
 *.tmp
 *~
+
+# Local RTK credentials and overrides
+**/config/*.local.yaml
+**/config/*secret*.yaml
