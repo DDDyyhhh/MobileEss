@@ -87,13 +87,15 @@ class _ChunkDecoder:
 
 class NtripClient:
     def __init__(self, host: str, port: int, mountpoint: str, username: str,
-                 password: str, timeout: float = 5.0):
+                 password: str, timeout: float = 5.0,
+                 read_timeout: float = 0.2):
         self.host = host
         self.port = port
         self.mountpoint = mountpoint
         self.username = username
         self.password = password
         self.timeout = timeout
+        self.read_timeout = read_timeout
         self._socket: Optional[socket.socket] = None
         self._body_buffer = bytearray()
         self._decoded_buffer = bytearray()
@@ -138,6 +140,9 @@ class NtripClient:
             self._decoded_buffer.clear()
             if gga:
                 sock.sendall((gga.strip() + '\r\n').encode('ascii'))
+            # Keep the worker responsive so it can continue consuming the
+            # receiver's NMEA and UNIHEADING messages while the caster is idle.
+            sock.settimeout(self.read_timeout)
             self._socket = sock
         except Exception:
             try:

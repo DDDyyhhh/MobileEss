@@ -5,7 +5,19 @@ um982_rtk:
     frame_id: "rtk_link"
     fix_topic: "/rtk/fix"
     diagnostics_topic: "/rtk/diagnostics"
-    ntrip_enabled: false
+    heading_topic: "/rtk/heading"
+    # /rtk/heading represents the vehicle body yaw derived from the Ant1 ->
+    # Ant2 baseline, so its axes are base_link rather than antenna axes.
+    heading_frame_id: "base_link"
+    heading_to_base_yaw_offset_rad: 0.0
+    heading_max_stddev_deg: 2.0
+    # UM982 GGA quality 4 is RTK fixed. Do not feed autonomous localization
+    # with standalone, float, or DGPS positions unless field-validated.
+    accepted_fix_qualities: [4]
+    # Configure from the receiver's verified RTK-fixed accuracy specification.
+    horizontal_accuracy_m: 0.05
+    vertical_accuracy_m: 0.10
+    ntrip_enabled: true
     ntrip_host: "114.111.30.20"
     ntrip_port: 8002
     ntrip_mountpoint: "RTCM33GRCEJ"
@@ -15,4 +27,6 @@ um982_rtk:
     # ntrip_password_env: "NTRIP_PASSWORD"
     ntrip_send_gga: true
     ntrip_reconnect_sec: 5.0
-    ntrip_gga_interval_sec: 10.0
+    ntrip_gga_interval_sec: 5.0
+    # A live TCP socket without incoming RTCM corrections is not healthy.
+    ntrip_rtcm_timeout_sec: 3.0

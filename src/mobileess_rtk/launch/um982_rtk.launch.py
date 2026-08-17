@@ -14,21 +14,11 @@ def generate_launch_description():
                 FindPackageShare('mobileess_rtk'), 'config', 'um982.example.yaml'
             ]),
         ),
-        DeclareLaunchArgument('serial_port', default_value='/dev/ttyUSB0'),
-        DeclareLaunchArgument('serial_baud', default_value='115200'),
-        DeclareLaunchArgument('ntrip_enabled', default_value='false'),
         Node(
             package='mobileess_rtk',
             executable='rtk_node',
             name='um982_rtk',
             output='screen',
-            parameters=[
-                params_file,
-                {
-                    'serial_port': LaunchConfiguration('serial_port'),
-                    'serial_baud': LaunchConfiguration('serial_baud'),
-                    'ntrip_enabled': LaunchConfiguration('ntrip_enabled'),
-                },
-            ],
+            parameters=[params_file],
         ),
     ])

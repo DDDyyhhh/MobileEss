@@ -1,4 +1,4 @@
-"""Small NMEA parser for UM982 GGA output."""
+"""Small parsers for UM982 GGA and dual-antenna heading output."""
 from dataclasses import dataclass
 from typing import Optional
 
@@ -10,6 +10,18 @@ class GgaFix:
     altitude: float
     quality: int
     satellites: int
+    hdop: float
+    raw: str
+
+
+@dataclass(frozen=True)
+class HeadingFix:
+    solution_status: str
+    position_type: str
+    baseline_m: float
+    heading_deg: float
+    pitch_deg: float
+    heading_stddev_deg: float
     raw: str
 
 
@@ -49,9 +61,33 @@ def parse_gga(line: str) -> Optional[GgaFix]:
     try:
         quality = int(fields[6] or '0')
         satellites = int(fields[7] or '0')
+        hdop = float(fields[8])
         altitude = float(fields[9])
         latitude = _coordinate(fields[2], fields[3], 2)
         longitude = _coordinate(fields[4], fields[5], 3)
     except (TypeError, ValueError, IndexError):
         return None
-    return GgaFix(latitude, longitude, altitude, quality, satellites, line)
+    return GgaFix(latitude, longitude, altitude, quality, satellites, hdop, line)
+
+
+def parse_uniheading(line: str) -> Optional[HeadingFix]:
+    """Parse UM982 UNIHEADINGA ASCII output."""
+    line = line.strip()
+    if not line.startswith('#UNIHEADING') or ';' not in line:
+        return None
+    body = line.split('*', 1)[0]
+    try:
+        fields = body.split(';', 1)[1].split(',')
+        if len(fields) < 8:
+            return None
+        return HeadingFix(
+            solution_status=fields[0].strip().upper(),
+            position_type=fields[1].strip().upper(),
+            baseline_m=float(fields[2]),
+            heading_deg=float(fields[3]),
+            pitch_deg=float(fields[4]),
+            heading_stddev_deg=float(fields[6]),
+            raw=line,
+        )
+    except (TypeError, ValueError, IndexError):
+        return None

@@ -94,6 +94,33 @@ class TestNtripRequest(unittest.TestCase):
         finally:
             module.socket.create_connection = original
 
+    def test_connect_sends_initial_gga_after_ntrip_headers(self):
+        client = NtripClient('caster', 8002, 'MOUNT', 'user', 'secret')
+        fake = FakeSocket([b'HTTP/1.1 200 OK\r\nContent-Type: gnss/data\r\n\r\n'])
+        module = __import__('mobileess_rtk.ntrip', fromlist=['socket'])
+        original = module.socket.create_connection
+        module.socket.create_connection = lambda address, timeout: fake
+        try:
+            client.connect('$GNGGA,example*00')
+            self.assertEqual(fake.sent[1], b'$GNGGA,example*00\r\n')
+        finally:
+            module.socket.create_connection = original
+            client.close()
+
+    def test_connect_switches_to_short_read_timeout_after_handshake(self):
+        client = NtripClient('caster', 8002, 'MOUNT', 'user', 'secret',
+                             timeout=5.0, read_timeout=0.2)
+        fake = FakeSocket([b'HTTP/1.1 200 OK\r\nContent-Type: gnss/data\r\n\r\n'])
+        module = __import__('mobileess_rtk.ntrip', fromlist=['socket'])
+        original = module.socket.create_connection
+        module.socket.create_connection = lambda address, timeout: fake
+        try:
+            client.connect()
+            self.assertEqual(fake.timeout, 0.2)
+        finally:
+            module.socket.create_connection = original
+            client.close()
+
 
 if __name__ == '__main__':
     unittest.main()
