@@ -672,8 +672,15 @@ void publish_map(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub
 
 void save_to_pcd()
 {
+    PointVector map_points;
+    ikdtree.flatten(ikdtree.Root_Node, map_points, NOT_RECORD);
+    PointCloudXYZI map_cloud;
+    map_cloud.points = map_points;
+    map_cloud.width = static_cast<uint32_t>(map_cloud.points.size());
+    map_cloud.height = 1;
+    map_cloud.is_dense = false;
     pcl::PCDWriter pcd_writer;
-    pcd_writer.writeBinary(map_file_path, *pcl_wait_pub);
+    pcd_writer.writeBinary(map_file_path, map_cloud);
 }
 
 template<typename T>
@@ -1342,18 +1349,28 @@ private:
 
     void map_save_callback(std_srvs::srv::Trigger::Request::ConstSharedPtr req, std_srvs::srv::Trigger::Response::SharedPtr res)
     {
-        RCLCPP_INFO(this->get_logger(), "Saving map to %s...", map_file_path.c_str());
-        if (pcd_save_en)
-        {
-            save_to_pcd();
-            res->success = true;
-            res->message = "Map saved.";
-        }
-        else
+        if (!pcd_save_en)
         {
             res->success = false;
             res->message = "Map save disabled.";
+            return;
         }
+        if (map_file_path.empty())
+        {
+            res->success = false;
+            res->message = "Map save path is empty.";
+            return;
+        }
+        if (ikdtree.validnum() == 0)
+        {
+            res->success = false;
+            res->message = "Map is empty.";
+            return;
+        }
+        RCLCPP_INFO(this->get_logger(), "Saving map to %s...", map_file_path.c_str());
+        save_to_pcd();
+        res->success = true;
+        res->message = "Map saved.";
     }
 
 private:

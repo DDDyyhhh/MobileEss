@@ -1,0 +1,33 @@
+fixed_map_localizer:
+  ros__parameters:
+    map_file_path: /var/lib/mower/maps/parking_lot_2026-08-10_v2/map.pcd
+    map_frame: map
+    odom_frame: odom
+    source_topic: /cloud_registered
+    # Observe candidate alignment first. Enable only after stationary and
+    # low-speed validation proves stable map -> odom output.
+    publish_tf: false
+    update_rate_hz: 1.0
+    # Once the first ICP alignment is accepted, republish that safe estimate so
+    # a rejected update cannot leave map -> odom stale.
+    tf_heartbeat_rate_hz: 5.0
+    # Do not make a lost localization estimate appear indefinitely current.
+    max_tf_heartbeat_age_s: 2.5
+    map_voxel_size_m: 0.30
+    scan_voxel_size_m: 0.20
+    max_correspondence_distance_m: 2.0
+    max_fitness_score: 0.10
+    maximum_iterations: 40
+    # The vehicle operates on a fixed ground plane. ICP still matches 3D scans,
+    # but map -> odom publishes only x, y, and yaw.
+    planar_mode: true
+    # map -> odom should vary slowly; reject implausible accepted ICP updates.
+    max_translation_step_m: 0.10
+    max_yaw_step_rad: 0.0872665
+    # Bound the first accepted result to the surveyed/manual startup estimate.
+    max_initial_translation_m: 1.0
+    max_initial_yaw_rad: 0.523599
+    # Set from the surveyed/manual start-area alignment before live matching.
+    initial_x_m: 0.0
+    initial_y_m: 0.0
+    initial_yaw_rad: 0.0

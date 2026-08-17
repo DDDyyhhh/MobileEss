@@ -11,7 +11,7 @@ def test_real_launch_requires_an_external_calibrated_config():
 
     ast.parse(launch)
     assert "FAST_LIO_REAL_CONFIG" in launch
-    assert "/etc/mower/fast_lio/config/mid360_real.yaml" in launch
+    assert "/etc/mower/fast_lio/mid360_real.yaml" in launch
     assert '"use_sim_time": LaunchConfiguration("use_sim_time")' in launch
     assert "publish.tf_en" in launch
     assert "mid360.yaml" not in launch

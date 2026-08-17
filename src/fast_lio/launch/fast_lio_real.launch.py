@@ -18,7 +18,7 @@ def generate_launch_description() -> LaunchDescription:
                 "config_file",
                 default_value=EnvironmentVariable(
                     "FAST_LIO_REAL_CONFIG",
-                    default_value="/etc/mower/fast_lio/config/mid360_real.yaml",
+                    default_value="/etc/mower/fast_lio/mid360_real.yaml",
                 ),
                 description=(
                     "Field-calibrated FAST-LIO YAML; no simulation fallback is used"

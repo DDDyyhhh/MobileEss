@@ -58,6 +58,7 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_components REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(diagnostic_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
@@ -73,6 +74,7 @@ set(dependencies
   rclcpp
   rclcpp_components
   geometry_msgs
+  diagnostic_msgs
   nav_msgs
   sensor_msgs
   std_msgs
@@ -123,8 +125,17 @@ endif()
 
 ament_target_dependencies(fastlio_mapping ${dependencies})
 
+add_executable(fixed_map_localizer src/fixed_map_localizer.cpp)
+target_include_directories(fixed_map_localizer PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+  ${PCL_INCLUDE_DIRS}
+)
+target_link_libraries(fixed_map_localizer ${PCL_LIBRARIES} Eigen3::Eigen)
+ament_target_dependencies(fixed_map_localizer ${dependencies})
+
 # ---------------- Install --------------- #
-install(TARGETS fastlio_mapping
+install(TARGETS fastlio_mapping fixed_map_localizer
   DESTINATION lib/${PROJECT_NAME}
 )
 
