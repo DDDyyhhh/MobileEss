@@ -4,6 +4,19 @@ livox_obstacle_cloud:
     # rear aluminium profile and RTK antenna posts, not navigable space.
     # Each box is [min_x, max_x, min_y, max_y, min_z, max_z] in livox_frame.
     self_filter_boxes: [-0.55, -0.18, -0.42, 0.42, -0.15, 1.20]
-    # Nav2 does not need every raw Mid-360 return for a 5 cm local costmap.
-    # Retain one in four samples to keep the obstacle feed at the 10 Hz sensor rate.
+    # Publish filtered dynamic obstacle marks. FAST-LIO still receives the
+    # unmodified CustomMsg stream; TimedDynamicObstacleLayer owns TTL expiry.
+    output_topic: /nav2/mid360_obstacles
+    # The raw Livox header is 0.24-0.55 s behind receipt in the Aug 18
+    # baseline. Nav2's rolling costmap must use the current TF window for
+    # ephemeral collision evidence; FAST-LIO keeps the original source stamp.
+    stamp_with_receipt_time: true
     point_stride: 4
+    min_range: 0.20
+    max_range: 4.0
+    ground_cell_size: 0.20
+    ground_band: 0.10
+    obstacle_min_height: 0.15
+    obstacle_max_height: 1.50
+    min_points_per_cell: 3
+    obstacle_cell_size: 0.10

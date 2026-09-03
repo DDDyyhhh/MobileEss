@@ -23,6 +23,12 @@
 *.tmp
 *~
 
+# ROS workspace and Python generated output
+/install/
+/log/
+**/__pycache__/
+*.py[cod]
+
 # Local RTK credentials and overrides
 **/config/*.local.yaml
 **/config/*secret*.yaml

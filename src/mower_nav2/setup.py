@@ -13,7 +13,7 @@ setup(
         ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/config', glob('config/*.yaml')),
-        ('share/' + package_name + '/launch', glob('launch/*.launch.py')),
+        ('share/' + package_name + '/behavior_trees', glob('behavior_trees/*.xml')),
         ('share/' + package_name + '/maps', glob('maps/*.*')),
         ('share/' + package_name + '/maps/indoor_map', glob('maps/indoor_map/*.*')),
         ('share/' + package_name + '/maps/indoor_map/pre_ransac_20260814',
@@ -30,6 +30,7 @@ setup(
     entry_points={
         'console_scripts': [
             'livox_obstacle_cloud = mower_nav2.livox_obstacle_cloud:main',
+            'collision_gate = mower_nav2.collision_gate:main',
         ],
     },
 )

@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>timed_dynamic_obstacle_layer</name>
+  <version>0.1.0</version>
+  <description>TTL-based local dynamic obstacle costmap layer.</description>
+  <maintainer email="3365185613@qq.com">DDDyyhhh</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav2_costmap_2d</depend>
+  <depend>pluginlib</depend>
+  <depend>rclcpp</depend>
+  <depend>rclcpp_lifecycle</depend>
+  <depend>sensor_msgs</depend>
+  <depend>tf2_geometry_msgs</depend>
+  <depend>tf2_ros</depend>
+  <depend>tf2_sensor_msgs</depend>
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

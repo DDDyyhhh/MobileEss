@@ -1,7 +1,7 @@
 cmd_vel_can_bridge:
   ros__parameters:
     interface: can0
-    command_topic: /cmd_vel
+    command_topic: /cmd_vel_gated
     status_can_id: 1287
     command_timeout_sec: 0.25
     status_timeout_sec: 0.25

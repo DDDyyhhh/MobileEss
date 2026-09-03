@@ -1,0 +1,7 @@
+<library path="timed_dynamic_obstacle_layer">
+  <class
+    type="timed_dynamic_obstacle_layer::TimedDynamicObstacleLayer"
+    base_class_type="nav2_costmap_2d::Layer">
+    <description>Expires transient local obstacle cells by age.</description>
+  </class>
+</library>

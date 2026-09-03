@@ -1,4 +1,4 @@
-"""Expose FAST-LIO's Livox CustomMsg as a separate Nav2 PointCloud2 stream."""
+"""Publish filtered Livox obstacle evidence for the local TTL layer."""
 
 from __future__ import annotations
 
@@ -9,72 +9,94 @@ from livox_ros_driver2.msg import CustomMsg
 from rclpy.node import Node
 from sensor_msgs.msg import PointCloud2, PointField
 
+from .livox_costmap_evidence import filter_livox_costmap_evidence
+
 
 POINT_FIELDS = [
     PointField(name='x', offset=0, datatype=PointField.FLOAT32, count=1),
     PointField(name='y', offset=4, datatype=PointField.FLOAT32, count=1),
     PointField(name='z', offset=8, datatype=PointField.FLOAT32, count=1),
 ]
-
 POINT_PACKER = struct.Struct('<fff')
 
 
-def is_inside_self_filter_box(point, boxes: list[float]) -> bool:
-    """Return whether a Livox point is inside one configured vehicle box."""
-    for offset in range(0, len(boxes), 6):
-        min_x, max_x, min_y, max_y, min_z, max_z = boxes[offset:offset + 6]
-        if (min_x <= point.x <= max_x and min_y <= point.y <= max_y
-                and min_z <= point.z <= max_z):
-            return True
-    return False
-
-
 class LivoxObstacleCloud(Node):
-    """Preserve FAST-LIO's CustomMsg input while giving Nav2 PointCloud2 data."""
+    """Convert CustomMsg into filtered transient obstacle marks.
+
+    FAST-LIO continues to consume the original CustomMsg. The timed dynamic
+    layer is the sole local-costmap owner of these marks and expires its own
+    cells without relying on geometric clearing rays.
+    """
 
     def __init__(self) -> None:
         super().__init__('livox_obstacle_cloud')
         self.declare_parameter('source_topic', '/livox/lidar')
         self.declare_parameter('output_topic', '/nav2/mid360_obstacles')
+        self.declare_parameter('stamp_with_receipt_time', True)
         self.declare_parameter(
             'self_filter_boxes', [-0.55, -0.18, -0.42, 0.42, -0.15, 1.20])
         self.declare_parameter('point_stride', 4)
-        self._self_filter_boxes = list(
-            self.get_parameter('self_filter_boxes').value)
-        self._point_stride = int(self.get_parameter('point_stride').value)
-        if len(self._self_filter_boxes) % 6 != 0:
+        self.declare_parameter('min_range', 0.20)
+        self.declare_parameter('max_range', 4.0)
+        self.declare_parameter('ground_cell_size', 0.20)
+        self.declare_parameter('ground_band', 0.10)
+        self.declare_parameter('obstacle_min_height', 0.15)
+        self.declare_parameter('obstacle_max_height', 1.50)
+        self.declare_parameter('min_points_per_cell', 3)
+        self.declare_parameter('obstacle_cell_size', 0.10)
+        self._params = {
+            name: self.get_parameter(name).value for name in (
+                'self_filter_boxes', 'point_stride', 'min_range', 'max_range',
+                'ground_cell_size', 'ground_band', 'obstacle_min_height',
+                'obstacle_max_height', 'min_points_per_cell',
+                'obstacle_cell_size')}
+        self._stamp_with_receipt_time = bool(
+            self.get_parameter('stamp_with_receipt_time').value)
+        if self._params['point_stride'] < 1:
+            raise ValueError('point_stride must be at least one')
+        if len(self._params['self_filter_boxes']) % 6 != 0:
             raise ValueError(
                 'self_filter_boxes must contain six values per axis-aligned box')
-        if self._point_stride < 1:
-            raise ValueError('point_stride must be at least one')
-        self.create_subscription(CustomMsg, str(self.get_parameter('source_topic').value),
-                                 self._cloud_callback, 1)
+        source_topic = str(self.get_parameter('source_topic').value)
+        self.create_subscription(CustomMsg, source_topic, self._cloud_callback, 1)
         self._publisher = self.create_publisher(
             PointCloud2, str(self.get_parameter('output_topic').value), 1)
 
-    def _cloud_callback(self, cloud: CustomMsg) -> None:
+    @staticmethod
+    def _to_cloud(source: CustomMsg, points: list[object],
+                  receipt_stamp=None) -> PointCloud2:
         output = PointCloud2()
-        output.header = cloud.header
+        # Never alias source.header: FAST-LIO must retain the raw Livox
+        # acquisition timestamp even when Nav2 evidence uses receipt time.
+        output.header.frame_id = source.header.frame_id
+        if receipt_stamp is None:
+            output.header.stamp.sec = source.header.stamp.sec
+            output.header.stamp.nanosec = source.header.stamp.nanosec
+        else:
+            output.header.stamp.sec = receipt_stamp.sec
+            output.header.stamp.nanosec = receipt_stamp.nanosec
         output.height = 1
         output.fields = POINT_FIELDS
         output.is_bigendian = False
-        output.point_step = 12
-        output.is_dense = False
-        # Keep only the newest cloud while the processor is busy. Nav2's rolling
-        # local map is safer with recent sparse observations than stale dense ones.
-        data = bytearray((len(cloud.points) // self._point_stride + 1) * output.point_step)
-        retained_count = 0
-        for source_index, point in enumerate(cloud.points):
-            if (source_index % self._point_stride != 0
-                    or is_inside_self_filter_box(point, self._self_filter_boxes)):
-                continue
-            POINT_PACKER.pack_into(data, retained_count * output.point_step,
-                                   point.x, point.y, point.z)
-            retained_count += 1
-        output.width = retained_count
-        output.row_step = retained_count * output.point_step
-        output.data = bytes(data[:output.row_step])
-        self._publisher.publish(output)
+        output.point_step = POINT_PACKER.size
+        output.is_dense = True
+        data = bytearray(len(points) * output.point_step)
+        for index, point in enumerate(points):
+            POINT_PACKER.pack_into(
+                data, index * output.point_step, point.x, point.y, point.z)
+        output.width = len(points)
+        output.row_step = len(data)
+        output.data = bytes(data)
+        return output
+
+    def _cloud_callback(self, cloud: CustomMsg) -> None:
+        marks, _ = filter_livox_costmap_evidence(cloud.points, **self._params)
+        # Raw Livox stamps can lag receipt by hundreds of milliseconds. Nav2's
+        # rolling local frame requires a current TF instant; the source message
+        # remains untouched for FAST-LIO.
+        receipt_stamp = self.get_clock().now().to_msg()
+        nav2_stamp = receipt_stamp if self._stamp_with_receipt_time else None
+        self._publisher.publish(self._to_cloud(cloud, marks, nav2_stamp))
 
 
 def main(args=None) -> None:
