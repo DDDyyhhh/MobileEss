@@ -10,6 +10,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import PointCloud2, PointField
 
 from .livox_costmap_evidence import filter_livox_costmap_evidence
+from .livox_serialized import decode_livox_xyz
 
 
 POINT_FIELDS = [
@@ -33,6 +34,8 @@ class LivoxObstacleCloud(Node):
         self.declare_parameter('source_topic', '/livox/lidar')
         self.declare_parameter('output_topic', '/nav2/mid360_obstacles')
         self.declare_parameter('stamp_with_receipt_time', True)
+        # Opt-in until the serialized path has passed target/field validation.
+        self.declare_parameter('serialized_input', False)
         self.declare_parameter(
             'self_filter_boxes', [-0.55, -0.18, -0.42, 0.42, -0.15, 1.20])
         self.declare_parameter('point_stride', 4)
@@ -58,7 +61,12 @@ class LivoxObstacleCloud(Node):
             raise ValueError(
                 'self_filter_boxes must contain six values per axis-aligned box')
         source_topic = str(self.get_parameter('source_topic').value)
-        self.create_subscription(CustomMsg, source_topic, self._cloud_callback, 1)
+        serialized = bool(self.get_parameter('serialized_input').value)
+        if serialized:
+            self.create_subscription(
+                CustomMsg, source_topic, self._serialized_callback, 1, raw=True)
+        else:
+            self.create_subscription(CustomMsg, source_topic, self._cloud_callback, 1)
         self._publisher = self.create_publisher(
             PointCloud2, str(self.get_parameter('output_topic').value), 1)
 
@@ -91,6 +99,25 @@ class LivoxObstacleCloud(Node):
 
     def _cloud_callback(self, cloud: CustomMsg) -> None:
         marks, _ = filter_livox_costmap_evidence(cloud.points, **self._params)
+        self._publish_marks(cloud, marks)
+
+    def _serialized_callback(self, data: bytes) -> None:
+        try:
+            frame = decode_livox_xyz(data, self._params['point_stride'])
+        except ValueError as exc:
+            # Do not publish an empty/fresh cloud when decoding fails. The
+            # existing evidence timeout must stop navigation on missing data.
+            self.get_logger().error('Rejected serialized Livox input: ' + str(exc))
+            return
+        params = dict(self._params, point_stride=1)
+        marks, _ = filter_livox_costmap_evidence(frame.points, **params)
+        source = CustomMsg()
+        source.header.frame_id = frame.frame_id
+        source.header.stamp.sec = frame.stamp_sec
+        source.header.stamp.nanosec = frame.stamp_nanosec
+        self._publish_marks(source, marks)
+
+    def _publish_marks(self, cloud, marks) -> None:
         # Raw Livox stamps can lag receipt by hundreds of milliseconds. Nav2's
         # rolling local frame requires a current TF instant; the source message
         # remains untouched for FAST-LIO.

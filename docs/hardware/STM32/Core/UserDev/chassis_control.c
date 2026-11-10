@@ -218,9 +218,15 @@ void chassis_control_req_motor_data(void)
 
     uint32_t now_tick = HAL_GetTick();
 
-    // 反馈降频：每 30ms 只请求一个通道
-    if ((now_tick - last_req_tick) < 30U)
+    /* MSSD 速度由两个 16 位寄存器组成，查询周期不能过慢。 */
+#if MOTOR_DRIVER_USED == DRIVER_TYPE_MSSD
+    if ((now_tick - last_req_tick) < 20U)
         return;
+#else
+    /* 诊断查询降频，不能与实时速度查询争抢 CAN 带宽。 */
+    if ((now_tick - last_req_tick) < 300U)
+        return;
+#endif
     last_req_tick = now_tick;
 
 #if MOTOR_DRIVER_USED == DRIVER_TYPE_ODRIVE
@@ -239,12 +245,12 @@ void chassis_control_req_motor_data(void)
     switch (req_step)
     {
     case 0:
-        MSSD_Req_Velocity(MSSD_NODE_RIGHT, MSSD_CH_RIGHT);
-        MSSD_Req_Velocity(MSSD_NODE_RIGHT, MSSD_CH_LEFT);
+        MSSD_Req_Velocity(MSSD_NODE_RIGHT, MSSD_CH_FRONT);
+        MSSD_Req_Velocity(MSSD_NODE_RIGHT, MSSD_CH_REAR);
         break;
     case 1:
-        MSSD_Req_Velocity(MSSD_NODE_LEFT, MSSD_CH_RIGHT);
-        MSSD_Req_Velocity(MSSD_NODE_LEFT, MSSD_CH_LEFT);
+        MSSD_Req_Velocity(MSSD_NODE_LEFT, MSSD_CH_FRONT);
+        MSSD_Req_Velocity(MSSD_NODE_LEFT, MSSD_CH_REAR);
         break;
     case 2:
         MSSD_Req_Power(MSSD_NODE_RIGHT); // 查右侧电压电流
@@ -253,12 +259,12 @@ void chassis_control_req_motor_data(void)
         MSSD_Req_Power(MSSD_NODE_LEFT); // 查左侧电压电流
         break;
     case 4:
-        MSSD_Req_Velocity(MSSD_NODE_RIGHT, MSSD_CH_RIGHT); // 再次穿插速度请求
-        MSSD_Req_Velocity(MSSD_NODE_RIGHT, MSSD_CH_LEFT);
+        MSSD_Req_Velocity(MSSD_NODE_RIGHT, MSSD_CH_FRONT); // 再次穿插速度请求
+        MSSD_Req_Velocity(MSSD_NODE_RIGHT, MSSD_CH_REAR);
         break;
     case 5:
-        MSSD_Req_Velocity(MSSD_NODE_LEFT, MSSD_CH_RIGHT); // 再次穿插速度请求
-        MSSD_Req_Velocity(MSSD_NODE_LEFT, MSSD_CH_LEFT);
+        MSSD_Req_Velocity(MSSD_NODE_LEFT, MSSD_CH_FRONT); // 再次穿插速度请求
+        MSSD_Req_Velocity(MSSD_NODE_LEFT, MSSD_CH_REAR);
         break;
     case 6:
         MSSD_Req_Temperature(MSSD_NODE_RIGHT); // 查右侧温度
@@ -275,8 +281,7 @@ void chassis_control_req_motor_data(void)
     }
 
 #elif MOTOR_DRIVER_USED == DRIVER_TYPE_OID
-    // OID 错峰轮询状态机 (总周期 30ms * 10 = 300ms)
-    // - 错误码 4 次 → 相电流 2 次 → 电压 2 次 → 温度 2 次
+    // OID 诊断轮询：每次只发一帧，避免一轮内突发多个查询。
     switch (req_step)
     {
     case 0:
@@ -293,27 +298,21 @@ void chassis_control_req_motor_data(void)
         break;
     case 4:
         OID_Req_Parameter(OID_NODE_FL, OID_PARAM_PHASE_CURRENT);
-        OID_Req_Parameter(OID_NODE_FR, OID_PARAM_PHASE_CURRENT);
         break;
     case 5:
-        OID_Req_Parameter(OID_NODE_RL, OID_PARAM_PHASE_CURRENT);
-        OID_Req_Parameter(OID_NODE_RR, OID_PARAM_PHASE_CURRENT);
+        OID_Req_Parameter(OID_NODE_FR, OID_PARAM_PHASE_CURRENT);
         break;
     case 6:
-        OID_Req_Parameter(OID_NODE_FL, OID_PARAM_BUS_VOLTAGE);
-        OID_Req_Parameter(OID_NODE_FR, OID_PARAM_BUS_VOLTAGE);
+        OID_Req_Parameter(OID_NODE_RL, OID_PARAM_PHASE_CURRENT);
         break;
     case 7:
-        OID_Req_Parameter(OID_NODE_RL, OID_PARAM_BUS_VOLTAGE);
-        OID_Req_Parameter(OID_NODE_RR, OID_PARAM_BUS_VOLTAGE);
+        OID_Req_Parameter(OID_NODE_RR, OID_PARAM_PHASE_CURRENT);
         break;
     case 8:
-        OID_Req_Parameter(OID_NODE_FL, OID_PARAM_TEMPERATURE);
-        OID_Req_Parameter(OID_NODE_RL, OID_PARAM_TEMPERATURE);
+        OID_Req_Parameter(OID_NODE_FL, OID_PARAM_BUS_VOLTAGE);
         break;
     case 9:
-        OID_Req_Parameter(OID_NODE_FR, OID_PARAM_TEMPERATURE);
-        OID_Req_Parameter(OID_NODE_RR, OID_PARAM_TEMPERATURE);
+        OID_Req_Parameter(OID_NODE_FR, OID_PARAM_BUS_VOLTAGE);
         break;
     }
 
@@ -332,10 +331,12 @@ static void chassis_control_req_oid_actual_speed(void)
     static uint32_t last_req_tick = 0;
     uint32_t now_tick = HAL_GetTick();
 
-    if ((now_tick - last_req_tick) < 50U)
+    // 20ms ~ 50ms 轮询一次
+    if ((now_tick - last_req_tick) < 20U)
         return;
     last_req_tick = now_tick;
 
+    // 一次性同时向 4 个驱动器请求速度数据
     OID_Req_Actual_Speed(OID_NODE_FL);
     OID_Req_Actual_Speed(OID_NODE_FR);
     OID_Req_Actual_Speed(OID_NODE_RL);
@@ -397,10 +398,10 @@ void chassis_stop(void)
     Send_Motor_speed(3, 0.0f, 0.0f, 0);
     Send_Motor_speed(4, 0.0f, 0.0f, 0);
 #elif MOTOR_DRIVER_USED == DRIVER_TYPE_MSSD
-    MSSD_Stop_Motor(MSSD_NODE_RIGHT, MSSD_CH_RIGHT);
-    MSSD_Stop_Motor(MSSD_NODE_RIGHT, MSSD_CH_LEFT);
-    MSSD_Stop_Motor(MSSD_NODE_LEFT, MSSD_CH_RIGHT);
-    MSSD_Stop_Motor(MSSD_NODE_LEFT, MSSD_CH_LEFT);
+    MSSD_Stop_Motor(MSSD_NODE_RIGHT, MSSD_CH_FRONT);
+    MSSD_Stop_Motor(MSSD_NODE_RIGHT, MSSD_CH_REAR);
+    MSSD_Stop_Motor(MSSD_NODE_LEFT, MSSD_CH_FRONT);
+    MSSD_Stop_Motor(MSSD_NODE_LEFT, MSSD_CH_REAR);
 #elif MOTOR_DRIVER_USED == DRIVER_TYPE_OID
     set_chassis_velocity(0, 0, 0);
 #endif
@@ -470,7 +471,8 @@ void set_chassis_velocity(float vx, float vy, float omega)
 {
     vy = 0.0f; // 强制不支持侧向移动
 
-    float R = TRACK_WIDTH / 2.0f;
+    float R = sqrtf((WHEELBASE / 2.0f) * (WHEELBASE / 2.0f) +
+                    (TRACK_WIDTH / 2.0f) * (TRACK_WIDTH / 2.0f));
 
     // 计算各轮子线速度 (m/s)
     float v_fr = vx - vy - omega * R;
@@ -505,13 +507,13 @@ void set_chassis_velocity(float vx, float vy, float omega)
     int32_t send_rpm_rl = (int32_t)(motor_rpm_rl);
     // Serial_Printf(SERIAL_PORT_2, "Set Vel FR: %ld RPM, RR: %ld RPM, FL: %ld RPM, RL: %ld RPM\r\n", send_rpm_fr, send_rpm_rr, send_rpm_fl, send_rpm_rl);
     //  驱动器 1 (Node 1) 控制左侧前后电机
-    MSSD_Set_Velocity(MSSD_NODE_LEFT, MSSD_CH_RIGHT, send_rpm_fl);
+    MSSD_Set_Velocity(MSSD_NODE_RIGHT, MSSD_CH_FRONT, send_rpm_fr);
     osDelay(1);
-    MSSD_Set_Velocity(MSSD_NODE_LEFT, MSSD_CH_LEFT, send_rpm_rl);
+    MSSD_Set_Velocity(MSSD_NODE_RIGHT, MSSD_CH_REAR, send_rpm_rr);
     osDelay(1);
-    MSSD_Set_Velocity(MSSD_NODE_RIGHT, MSSD_CH_RIGHT, send_rpm_fr);
+    MSSD_Set_Velocity(MSSD_NODE_LEFT, MSSD_CH_FRONT, send_rpm_fl);
     osDelay(1); // 适当延时，避免 CAN 总线过载
-    MSSD_Set_Velocity(MSSD_NODE_RIGHT, MSSD_CH_LEFT, send_rpm_rr);
+    MSSD_Set_Velocity(MSSD_NODE_LEFT, MSSD_CH_REAR, send_rpm_rl);
     osDelay(1);
 
 #elif MOTOR_DRIVER_USED == DRIVER_TYPE_OID
@@ -600,26 +602,20 @@ void set_chassis_rc_control(uint16_t ly, uint16_t rx)
     // ============================================================
     // <<<---  后退限速动态补偿系数 --->>>
     // ============================================================
-    float reverse_factor = 1.0f; // 默认不减速
-    float turn_in_dir; // 后退方向
-    // forward_in < 0.0f 说明操作员正在将摇杆往后拉（向后倒车）
-    if (forward_in < 0.0f && g_app.cfg_reverse_limit_en == 1)
-    {
-        reverse_factor = 0.8f; // 如果遥控器设置中的“后退限速”开启，速度裁切为 80%
-        
-    }
+    float reverse_factor = 1.0f;
+    float turn_in_dir = turn_in;
 
     if (forward_in < 0.0f)
     {
         turn_in_dir = -turn_in;
-    }
-    else if (forward_in > 0.0f)
-    {
-        turn_in_dir = turn_in;
+        if (g_app.cfg_reverse_limit_en == 1)
+        {
+            reverse_factor = 0.8f;
+        }
     }
 
     float vx = forward_in * g_app.speed * reverse_factor;
-    float vy = 0.0f; // 差速底盘不支持侧向移动
+    float vy = 0.0f;
     float omega = turn_in_dir * g_app.speed * g_app.turn_speed;
 
     set_chassis_velocity(vx, vy, omega);
@@ -669,7 +665,11 @@ void Control_Update(void)
 
 #if MOTOR_DRIVER_USED == DRIVER_TYPE_OID
     chassis_control_req_oid_actual_speed();
-    chassis_control_send_oid_wheel_speed_feedback();
+    // 0x50A 已统一由 app_BMS_Sensor.c 的遥测任务发送，避免重复入队。
+    // chassis_control_send_oid_wheel_speed_feedback();
+#elif MOTOR_DRIVER_USED == DRIVER_TYPE_MSSD
+    /* MSSD 实际速度反馈由轮询得到，统一由此处驱动错峰查询。 */
+    chassis_control_req_motor_data();
 #endif
 
     // =========================================================
@@ -748,12 +748,11 @@ void Control_Update(void)
             return;
         }
 
-        // The installed OID motor directions invert the kinematic yaw helper.
-        // Preserve ROS +angular.z = left turn without changing RC steering.
+        // 3. 正常执行 API 运动指令
         set_chassis_velocity(host_vx, host_vy, -host_omega);
     }
 
-    chassis_control_req_motor_data();
+    // chassis_control_req_motor_data();
     osDelay(1);
     // 发送线速度、角速度与编码器数据
 }

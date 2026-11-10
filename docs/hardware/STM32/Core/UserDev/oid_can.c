@@ -8,12 +8,14 @@
 
 #include "oid_can.h"
 #include <string.h>
+#include "odrive_can.h"
 
 // 声明 freertos.c 中的 CAN 发送入队函数
 extern uint8_t CAN_Enqueue_Message(uint32_t id, uint8_t *data, uint8_t len, uint8_t is_remote);
 
 // 实例化驱动器数据数组
 volatile OID_Data_t g_oid_drives[OID_MAX_NODES] = {0};
+volatile uint32_t g_oid_speed_query_failures = 0;
 
 // 大端序编码
 /* ==================================================================== */
@@ -32,7 +34,14 @@ static void oid_send_cmd_int32(uint8_t node_id, uint8_t cmd, int32_t value)
     tx_data[3] = (uint8_t)((uint32_t)value >> 8);
     tx_data[4] = (uint8_t)((uint32_t)value >> 0);
 
-    CAN_Enqueue_Message(node_id, tx_data, 5, 0);
+    if (cmd == OID_CMD_SPEED)
+    {
+        CAN_Enqueue_Control_Message(node_id, tx_data, 5, 0);
+    }
+    else
+    {
+        CAN_Enqueue_Message(node_id, tx_data, 5, 0);
+    }
 }
 
 /**
@@ -86,7 +95,7 @@ void OID_Heartbeat(uint8_t node_id)
     CAN_Enqueue_Message(node_id, tx_data, 1, 0);
 }
 
-void OID_Req_Parameter(uint8_t node_id, uint8_t sub_index)
+uint8_t OID_Req_Parameter(uint8_t node_id, uint8_t sub_index)
 {
     // 0x0F + sub_index
     uint8_t tx_data[8] = {0};
@@ -99,12 +108,17 @@ void OID_Req_Parameter(uint8_t node_id, uint8_t sub_index)
         g_oid_drives[node_id].pending_subidx = sub_index;
     }
 
-    CAN_Enqueue_Message(node_id, tx_data, 2, 0);
+    return CAN_Enqueue_Message(node_id, tx_data, 2, 0);
 }
 
-void OID_Req_Actual_Speed(uint8_t node_id)
+uint8_t OID_Req_Actual_Speed(uint8_t node_id)
 {
-    OID_Req_Parameter(node_id, OID_PARAM_ACTUAL_SPEED);
+    uint8_t result = OID_Req_Parameter(node_id, OID_PARAM_ACTUAL_SPEED);
+    if (!result)
+    {
+        g_oid_speed_query_failures++;
+    }
+    return result;
 }
 
 /* ==================================================================== */

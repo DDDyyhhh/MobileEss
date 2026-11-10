@@ -106,12 +106,14 @@ void OID_Brake(uint8_t node_id);
 /**
  * @brief 请求读取参数 (0x0F + sub_index 协议)
  */
-void OID_Req_Parameter(uint8_t node_id, uint8_t sub_index);
+uint8_t OID_Req_Parameter(uint8_t node_id, uint8_t sub_index);
 
 /**
  * @brief 请求实时电转速 (0x0F 0x01, 响应 int32 erpm)
  */
-void OID_Req_Actual_Speed(uint8_t node_id);
+uint8_t OID_Req_Actual_Speed(uint8_t node_id);
+
+extern volatile uint32_t g_oid_speed_query_failures;
 
 /**
  * @brief 向指定节点发送心跳 (状态字读取 0x00，DLC=1)

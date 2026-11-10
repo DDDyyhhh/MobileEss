@@ -607,6 +607,11 @@
               <FilePath>..\Core\UserDev\BladeMotor.c</FilePath>
             </File>
             <File>
+              <FileName>flipsky_can.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\UserDev\flipsky_can.c</FilePath>
+            </File>
+            <File>
               <FileName>bsp_imu_solver.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Core\UserDev\bsp_imu_solver.c</FilePath>
@@ -625,6 +630,11 @@
               <FileName>modbus_rtu_bus.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Core\UserDev\modbus_rtu_bus.c</FilePath>
+            </File>
+            <File>
+              <FileName>mssd_can.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\UserDev\mssd_can.c</FilePath>
             </File>
             <File>
               <FileName>odrive_can.c</FileName>

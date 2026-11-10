@@ -1,0 +1,35 @@
+fixed_map_localizer:
+  ros__parameters:
+    map_file_path: /var/lib/mower/maps/parking_lot_2026-08-10_v2/map.pcd
+    map_frame: map
+    odom_frame: odom
+    source_topic: /cloud_registered
+    publish_tf: false
+    update_rate_hz: 1.0
+    tf_heartbeat_rate_hz: 30.0
+    max_tf_heartbeat_age_s: 2.5
+    map_voxel_size_m: 0.3
+    scan_voxel_size_m: 0.2
+    max_correspondence_distance_m: 2.0
+    max_fitness_score: 0.1
+    maximum_iterations: 40
+    planar_mode: true
+    max_translation_step_m: 0.1
+    max_yaw_step_rad: 0.0872665
+    max_initial_translation_m: 3.0
+    max_initial_yaw_rad: 3.141593
+    initial_x_m: 0.0
+    initial_y_m: 0.0
+    initial_yaw_rad: 0.0
+    startup_search_enabled: true
+    startup_search_radius_m: 3.0
+    startup_search_step_m: 0.5
+    startup_yaw_samples: 24
+    startup_refine_candidates: 32
+    startup_min_overlap: 0.65
+    startup_ambiguity_margin: 0.01
+    startup_confirmation_count: 3
+    startup_search_mode: full_map
+    startup_search_timeout_s: 120.0
+    require_stationary_startup: true
+    maximum_scan_age_s: 1.0

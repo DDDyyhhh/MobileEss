@@ -36,7 +36,7 @@
 #define TRACK_WIDTH 0.64f       // 轮距 (m)
 #define WHEELBASE 0.69f        // 轴距 (m)
 #define PI 3.1415926535f
-#define GEAR_RATIO 4.43f        // 电机减速比
+#define GEAR_RATIO 2.0f        // 电机减速比
 
 #define HOST_CMD_FRAME_ID 0x05
 #define HOST_STATUS_FRAME_ID 0x06
@@ -59,33 +59,36 @@
 #define MODE_API_ACTIVE  2  // API完全接管，动力开启
 
 // ============================================================================
-// 驱动器类型选择宏 (条件编译)
+// 驱动器类型选择宏（条件编译）
 // ============================================================================
-#define DRIVER_TYPE_ODRIVE 0
-#define DRIVER_TYPE_MSSD   1
-#define DRIVER_TYPE_OID    2
+#include "motor_driver_config.h"
 
-// 👇 修改这里来切换当前使用的底层驱动器！
-//#define MOTOR_DRIVER_USED  DRIVER_TYPE_ODRIVE
-//#define MOTOR_DRIVER_USED   DRIVER_TYPE_MSSD
-#define MOTOR_DRIVER_USED   DRIVER_TYPE_OID
 #if MOTOR_DRIVER_USED == DRIVER_TYPE_ODRIVE
     #include "odrive_can.h"
     extern volatile ODrive_Data_t g_odrive_motors[ODRIVE_MAX_MOTORS];
-#elif MOTOR_DRIVER_USED == DRIVER_TYPE_MSSD
-    #include "mssd_can.h"
-    // 定义美思固驱动器的节点 ID 分配
-    #define MSSD_NODE_RIGHT   2  // 节点 3 控制右侧电机 (CH_R=前, CH_L=后)
-    #define MSSD_NODE_LEFT    3  // 节点 2 控制左侧电机 (CH_R=前, CH_L=后)
+
 #elif MOTOR_DRIVER_USED == DRIVER_TYPE_OID
     #include "oid_can.h"
-    // 定义欧艾迪 OID 驱动器节点 ID 分配 (单驱动器单电机)
-    #define OID_NODE_FL    2  // 前左
-    #define OID_NODE_FR    1  // 前右
-    #define OID_NODE_RL    4  // 后左
-    #define OID_NODE_RR    3  // 后右
-    // 极对数: erpm = rpm * POLE_PAIRS
-    #define OID_POLE_PAIRS  10
+    extern volatile OID_Data_t g_oid_drives[OID_MAX_NODES];
+
+    /* OID：一个节点对应一个电机 */
+    #define OID_NODE_FL       2
+    #define OID_NODE_FR       1
+    #define OID_NODE_RL       4
+    #define OID_NODE_RR       3
+    #define OID_POLE_PAIRS    15
+
+#elif MOTOR_DRIVER_USED == DRIVER_TYPE_MSSD
+    #include "mssd_can.h"
+
+    /* MSSD：一个节点包含前、后两个电机通道 */
+    #define MSSD_NODE_RIGHT   2
+    #define MSSD_NODE_LEFT    3
+    #define MSSD_CH_FRONT      MSSD_CH_RIGHT
+    #define MSSD_CH_REAR       MSSD_CH_LEFT
+
+#else
+    #error "Unsupported motor driver"
 #endif
 // ============================================================================
 

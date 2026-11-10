@@ -52,8 +52,8 @@ EG2104_HBridge_t grass_bag_bridge = {
 #define UP_SPEED_FACTOR 0.80f
 
 // --- 草袋开合参数 ---
-#define GRASS_BAG_SPEED 50.0f      // 草袋电机速度 (根据实际机械阻力调整)
-#define GRASS_BAG_TIMEOUT_MS 15000 // 草袋完全打开或关闭所需的时间 (毫秒)，请实际测试后修改
+#define GRASS_BAG_SPEED 60.0f      // 草袋电机速度 (根据实际机械阻力调整)
+#define GRASS_BAG_TIMEOUT_MS 20000 // 草袋完全打开或关闭所需的时间 (毫秒)，请实际测试后修改
 
 // --- 【核心】实测数据点 (时间 ms -> 高度 cm) ---
 // 基于你提供的数据：0s=11.3, 1s=10.0, 2s=7.2, 3s=5.7, 4s=4.4, 5s=3.2, 6s=2.1

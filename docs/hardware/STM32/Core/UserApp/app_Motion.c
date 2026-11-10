@@ -105,6 +105,7 @@ void StartTask_Motion(void *argument)
 
   // 旋钮状态记录
   static uint8_t last_blade_knob = 0xFF;
+  static float last_blade_command = -1.0f;
   static uint8_t last_height_knob = 0xFF;
 
 #if ENABLE_STRESS_TEST_MODE
@@ -652,34 +653,35 @@ void StartTask_Motion(void *argument)
         g_app.receiver_status[STATUS_INDEX_GEAR] = g_app.knob_gear;
 
         // 2. 处理割刀 (Blade) -> 必须解锁才生效
-        if (Ctrl_Mode == 2 || (Ctrl_Mode == 0 && g_app.lock == 0)) // 已解锁
         {
-          // 只有当旋钮位置发生变化时，才下发指令 (防止一直发CAN/PWM指令占用总线)
-          // 或者你的 BladeMotor_SetSpeed 内部有判断也可以
+          float blade_command = BLADE_SPEED_OFF;
+          bool blade_allowed = (Ctrl_Mode == 2 || (Ctrl_Mode == 0 && g_app.lock == 0));
 
-          switch (g_app.knob_blade)
+          if (blade_allowed)
           {
-          case 1:
-            g_app.receiver_status[STATUS_INDEX_BLADE_SPEED] = 1;
-            BladeMotor_SetSpeed(BLADE_SPEED_LEVEL_1);
-            break;
-          case 2:
-            g_app.receiver_status[STATUS_INDEX_BLADE_SPEED] = 2;
-            BladeMotor_SetSpeed(BLADE_SPEED_LEVEL_2);
-            break;
-          case 3:
-            g_app.receiver_status[STATUS_INDEX_BLADE_SPEED] = 3;
-            BladeMotor_SetSpeed(BLADE_SPEED_LEVEL_3);
-            break;
-          default:
-            BladeMotor_SetSpeed(0.0f);
-            break; // 0档关闭
+            switch (g_app.knob_blade)
+            {
+            case 1:
+              g_app.receiver_status[STATUS_INDEX_BLADE_SPEED] = 1;
+              blade_command = BLADE_SPEED_LEVEL_1;
+              break;
+            case 2:
+              g_app.receiver_status[STATUS_INDEX_BLADE_SPEED] = 2;
+              blade_command = BLADE_SPEED_LEVEL_2;
+              break;
+            case 3:
+              g_app.receiver_status[STATUS_INDEX_BLADE_SPEED] = 3;
+              blade_command = BLADE_SPEED_LEVEL_3;
+              break;
+            default:
+              blade_command = BLADE_SPEED_OFF;
+              break;
+            }
           }
-        }
-        else
-        {
-          // RC 模式且未解锁，强制关刀
-          BladeMotor_SetSpeed(BLADE_SPEED_OFF);
+
+          // 【修改】：移除一回性的变化拦截，直接调用！
+          // 内部会自动按 200ms 周期向电调发送 CAN 保活指令，防止电调 450ms 超时停车
+          BladeMotor_SetSpeed(blade_command);
         }
         // ============================================================
         //      <<<--- 草袋开合切换逻辑 (新增) ---<<<

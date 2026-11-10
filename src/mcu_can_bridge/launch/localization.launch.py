@@ -29,6 +29,9 @@ def generate_launch_description():
             ]),
         ),
         DeclareLaunchArgument('can_interface', default_value='can0'),
+        DeclareLaunchArgument('enable_can_feedback', default_value='true'),
+        DeclareLaunchArgument('wheel_params_file', default_value=PathJoinSubstitution([
+            FindPackageShare('mcu_can_bridge'), 'config', 'wheel_odometry.yaml'])),
         DeclareLaunchArgument('enable_global_localization', default_value='false'),
         DeclareLaunchArgument('rtk_extrinsics_configured', default_value='false'),
         DeclareLaunchArgument('start_rtk_node', default_value='true'),
@@ -65,7 +68,9 @@ def generate_launch_description():
             executable='mcu_can_bridge',
             name='mcu_can_bridge',
             output='screen',
-            parameters=[{'interface': LaunchConfiguration('can_interface')}],
+            parameters=[LaunchConfiguration('wheel_params_file'),
+                        {'interface': LaunchConfiguration('can_interface')}],
+            condition=IfCondition(LaunchConfiguration('enable_can_feedback')),
         ),
         Node(
             package='robot_localization',

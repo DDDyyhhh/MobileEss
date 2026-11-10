@@ -30,7 +30,7 @@ static uint8_t a28_config[6] = {
     0xC0,                   // 0xC0: 配置掉电保存
     0x00,                   // ADDH: 地址高位
     0x00,                   // ADDL: 地址低位
-    A28_BAUD_115200 | A28_AIR_SPEED_3, // SPEED: 9600bps, 空速0
+    A28_BAUD_9600 | A28_AIR_SPEED_0, // SPEED: 9600bps, 空速0
     0x00,                   // CHAN: 信道 0
     A28_MOD_FLRC | A28_POWER_12DBM     // OPTION: FLRC模式, 12dBm
 };

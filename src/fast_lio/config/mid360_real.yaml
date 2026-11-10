@@ -10,7 +10,7 @@
     common.odometry_topic: "/fast_lio/odometry"
     common.time_sync_en: false           # 实机硬件已对齐时间戳，设为 false
     common.time_offset_lidar_to_imu: 0.0
-    common.extrinsic_est_en: false       # 内置 IMU 外参固定，关闭在线估计
+    mapping.extrinsic_est_en: false      # 内置 IMU 外参固定，关闭在线估计
 
     # ===== 发布选项 =====
     publish.path_en: true
@@ -25,7 +25,6 @@
     preprocess.lidar_type: 1           # 1 = Livox 系列雷达 (CustomMsg)
     preprocess.scan_line: 4            # Mid-360 物理线数为 4 线
     preprocess.blind: 0.1              # 盲区：实机设为 0.1m (仿真原 4.0m 会裁掉近处点云)
-    preprocess.point_filter_num: 3     # 点云降采样
     preprocess.timestamp_unit: 3       # 3 = NS (纳秒)，livox_ros_driver2 默认单位
     preprocess.scan_rate: 10
 
@@ -52,7 +51,7 @@
     mapping.imu_acc_noise: 0.01
     mapping.imu_gyro_bias_noise: 0.000001
     mapping.imu_acc_bias_noise: 0.0001
-    maximum_iteration: 3
+    max_iteration: 3
     minimum_uncertainty: 0.001
     imu_time_shift: 0.0
     cut_frame_num: 10000

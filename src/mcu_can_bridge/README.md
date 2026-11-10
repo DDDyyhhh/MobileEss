@@ -6,8 +6,25 @@ ROS 2 SocketCAN bridge for the STM32 `0x50A` four-wheel actual speed feedback.
 
 - Input: Linux SocketCAN `can0`, standard CAN ID `0x50A`, DLC 8
 - Encoding: four big-endian signed `int16`, unit `mm/s`, ordered `FL FR RL RR`
-- Track width: `0.690 m`
+- Track width: `0.640 m`
 - Output: `/wheel/odometry/twist`
+- Original ideal-model observation: `/wheel/odometry/twist_raw`
+
+The vehicle's 2026-10-19 right-turn fit is configured in
+`config/wheel_odometry.yaml`. It corrects the wheel-derived yaw observation,
+blending stationary counter-rotation and forward motion; four CAN wheel speeds,
+linear velocity, physical track width, and motor commands remain unchanged.
+Left turns, reverse and tiny differential noise use the original model.
+The fit uses two right-turn recordings on the current surface and requires
+independent validation. It is not a general tire/terrain calibration.
+
+`local_ekf.yaml` keeps wheel linear velocity but excludes wheel yaw from fusion.
+IMU angular velocity and FAST-LIO pose provide yaw while the wheel fit is being
+evaluated. This avoids letting an inaccurate wheel yaw observation override
+those sensors. Correcting the observation does not itself increase physical
+turning response. Diagnostics report the original yaw, corrected yaw, scale,
+and active motion regime; raw and corrected twist stop publishing on feedback
+timeout as before.
 - Output type: `geometry_msgs/msg/TwistWithCovarianceStamped`
 - Output frame: `base_link`
 - Diagnostics: `/wheel/diagnostics`
@@ -34,7 +51,7 @@ The localization launch also requires the ROS 2 Humble
 
 ```bash
 ros2 run mcu_can_bridge mcu_can_bridge --ros-args \
-  -p interface:=can0 -p track_width_m:=0.690
+  -p interface:=can0 -p track_width_m:=0.640
 ros2 topic echo /wheel/odometry/twist
 ros2 topic hz /wheel/odometry/twist
 ros2 topic echo /wheel/diagnostics

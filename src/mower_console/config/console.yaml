@@ -1,0 +1,9 @@
+map_directory: /home/cat/MobileEss_data/maps/field_20261009_01/keepout_AB_short_candidate_20261016
+can_interface: can0
+pairing_file: /home/cat/.config/mower_console/pairing-code
+# Enable only after the new execution chain's documented field acceptance.
+motion_enabled: false
+accepted_capabilities:
+  forward: false
+  reverse: false
+  rotate: false

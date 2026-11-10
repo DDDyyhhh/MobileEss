@@ -1,10 +1,12 @@
 #include "odrive_can.h"
 #include "chassis_control.h"
+#include "flipsky_can.h"
 #include <string.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include "serial_port.h" // 用于调试打印
 #include "cmsis_os.h"
+#include "FreeRTOS.h"
 #include "chassis_control.h"
 // 全局变量定义
 volatile ODrive_Data_t g_odrive_motors[ODRIVE_MAX_MOTORS];
@@ -22,44 +24,153 @@ volatile uint32_t g_can_rx_queue_full = 0;
 volatile uint8_t g_host_cmd_pending = 0;
 volatile uint8_t g_host_cmd_len = 0;
 volatile uint8_t g_host_cmd_data[8] = {0};
+volatile uint32_t g_can_tx_enqueue_failures = 0;
 extern CAN_HandleTypeDef hcan1; // 声明外部 CAN 句柄，实际定义在 main.c 中
 extern osMessageQueueId_t Queue_CanTxHandle;
 extern osMessageQueueId_t Queue_CanRxHandle;
+
+static CAN_TxMsg_t g_latest_control[5];
+static volatile uint8_t g_latest_control_pending[5] = {0};
+static CAN_TxMsg_t g_latest_telemetry;
+static volatile uint8_t g_latest_telemetry_pending = 0U;
+
+static void CAN_Build_Message(CAN_TxMsg_t *msg, uint32_t id, uint8_t ide,
+                              uint8_t *data, uint8_t len, uint8_t is_remote)
+{
+    memset(msg, 0, sizeof(*msg));
+    msg->ide = ide;
+    msg->stdId = (ide == CAN_ID_EXT) ? 0U : (id & 0x7FFU);
+    msg->extId = (ide == CAN_ID_EXT) ? (id & 0x1FFFFFFFU) : 0U;
+    msg->rtr = is_remote;
+    msg->dlc = (len > 8U) ? 8U : len;
+
+    if (data != NULL && !is_remote)
+    {
+        memcpy(msg->data, data, msg->dlc);
+    }
+}
+
+static uint8_t CAN_Enqueue_MessageEx(uint32_t id,
+                                     uint8_t ide,
+                                     uint8_t *data,
+                                     uint8_t len,
+                                     uint8_t is_remote)
+{
+    CAN_TxMsg_t msg = {0};
+    CAN_Build_Message(&msg, id, ide, data, len, is_remote);
+
+    if (osMessageQueuePut(Queue_CanTxHandle, &msg, 0U, 0U) != osOK)
+    {
+        g_can_tx_enqueue_failures++;
+        return 0U;
+    }
+
+    return 1U;
+}
+
 uint8_t CAN_Enqueue_Message(uint32_t id, uint8_t *data, uint8_t len, uint8_t is_remote)
 {
+    return CAN_Enqueue_MessageEx(id, CAN_ID_STD, data, len, is_remote);
+}
+
+uint8_t CAN_Enqueue_Ext_Message(uint32_t id, uint8_t *data, uint8_t len, uint8_t is_remote)
+{
+    return CAN_Enqueue_MessageEx(id, CAN_ID_EXT, data, len, is_remote);
+}
+
+uint8_t CAN_Enqueue_Control_Message(uint32_t id, uint8_t *data, uint8_t len, uint8_t is_remote)
+{
+    uint8_t node_id = (uint8_t)(id & 0xFFU);
     CAN_TxMsg_t msg;
-    msg.stdId = id;
-    msg.rtr = is_remote; // 记录帧类型
-    
-    // 对于 RTR 帧，DLC 可以是你要请求的数据长度，且 data 可以为空
-    msg.dlc = (len > 8) ? 8 : len;
-    
-    if (data != NULL && !is_remote) {
-        memcpy(msg.data, data, msg.dlc);
-    } else {
-        memset(msg.data, 0, 8); // 清零以防有随机值
+
+    if (node_id == 0U || node_id >= 5U)
+    {
+        return 0U;
     }
 
-    uint32_t free_space = osMessageQueueGetSpace(Queue_CanTxHandle);
+    CAN_Build_Message(&msg, id, CAN_ID_STD, data, len, is_remote);
 
-    // ============================================================
-    // QoS 流量清洗机制 (保底设计)
-    // ============================================================
-    if (free_space < 10) 
+    taskENTER_CRITICAL();
+    g_latest_control[node_id] = msg;
+    g_latest_control_pending[node_id] = 1U;
+    taskEXIT_CRITICAL();
+    return 1U;
+}
+uint8_t CAN_Enqueue_Keyed_Control_Message(uint8_t control_key, uint32_t id,
+                                           uint8_t *data, uint8_t len,
+                                           uint8_t is_remote)
+{
+    CAN_TxMsg_t msg;
+
+    if (control_key == 0U || control_key >= 5U)
     {
-        // 队列快满时，丢弃不重要的状态反馈帧 (>= 0x500)
-        // 保证电机的控制指令 (0x000 ~ 0x3FF) 能进队列
-        if (id >= 0x500) 
+        return 0U;
+    }
+
+    CAN_Build_Message(&msg, id, CAN_ID_STD, data, len, is_remote);
+
+    taskENTER_CRITICAL();
+    g_latest_control[control_key] = msg;
+    g_latest_control_pending[control_key] = 1U;
+    taskEXIT_CRITICAL();
+    return 1U;
+}
+
+uint8_t CAN_TryGet_Control_Message(CAN_TxMsg_t *msg)
+{
+    uint8_t node_id;
+
+    if (msg == NULL)
+    {
+        return 0U;
+    }
+
+    taskENTER_CRITICAL();
+    for (node_id = 1U; node_id < 5U; node_id++)
+    {
+        if (g_latest_control_pending[node_id] != 0U)
         {
-            return 0; 
+            *msg = g_latest_control[node_id];
+            g_latest_control_pending[node_id] = 0U;
+            taskEXIT_CRITICAL();
+            return 1U;
         }
     }
+    taskEXIT_CRITICAL();
+    return 0U;
+}
 
-    if (osMessageQueuePut(Queue_CanTxHandle, &msg, 0, 0) == osOK) {
-        return 1; 
+uint8_t CAN_Enqueue_Telemetry_Message(uint32_t id, uint8_t *data, uint8_t len, uint8_t is_remote)
+{
+    CAN_TxMsg_t msg;
+    uint8_t was_pending;
+
+    CAN_Build_Message(&msg, id, CAN_ID_STD, data, len, is_remote);
+    taskENTER_CRITICAL();
+    was_pending = g_latest_telemetry_pending;
+    g_latest_telemetry = msg;
+    g_latest_telemetry_pending = 1U;
+    taskEXIT_CRITICAL();
+    return was_pending ? 0U : 1U;
+}
+
+uint8_t CAN_TryGet_Telemetry_Message(CAN_TxMsg_t *msg)
+{
+    if (msg == NULL)
+    {
+        return 0U;
     }
-    
-    return 0;
+
+    taskENTER_CRITICAL();
+    if (g_latest_telemetry_pending != 0U)
+    {
+        *msg = g_latest_telemetry;
+        g_latest_telemetry_pending = 0U;
+        taskEXIT_CRITICAL();
+        return 1U;
+    }
+    taskEXIT_CRITICAL();
+    return 0U;
 }
 // =================================================================
 // 1. 底层发送函�?
@@ -230,7 +341,7 @@ uint8_t odrive_set_input_vel(CAN_HandleTypeDef *hcan, uint8_t node_id, float vel
 
     // 3. 【核心修改】：不再调用 odrive_send_data，直接进入软件队列
     // 这样这个函数会瞬间返回，不会因为 CAN 邮箱满而阻塞
-    return CAN_Enqueue_Message(can_id, data, 8, 0);
+    return CAN_Enqueue_Control_Message(node_id, data, 8, 0);
 }
 
 uint8_t odrive_set_input_pos(CAN_HandleTypeDef *hcan, uint8_t node_id, float position, float velocity_ff, float torque_ff)
@@ -365,17 +476,18 @@ uint8_t odrive_init_closed_loop(CAN_HandleTypeDef *hcan, uint8_t node_id)
 // =================================================================
 static void CAN_Process_Rx_Message(const CAN_RxMsg_t *msg)
 {
-    if (msg->ide == CAN_ID_STD) {
-        g_can_rx_std++;
-    } else {
-        g_can_rx_ext++;
-        return;
-    }
-
     if (msg->rtr != CAN_RTR_DATA) {
         g_can_rx_rtr++;
         return;
     }
+
+    if (msg->ide == CAN_ID_EXT)
+    {
+        Flipsky_CAN_ProcessRx(msg->extId, msg->data, msg->dlc);
+        return;
+    }
+
+    g_can_rx_std++;
 
     if (msg->stdId == HOST_CMD_FRAME_ID)
     {
@@ -486,7 +598,8 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
     g_can_rx_ok++;
 
     CAN_RxMsg_t msg;
-    msg.stdId = RxHeader.StdId;
+    msg.stdId = (RxHeader.IDE == CAN_ID_EXT) ? 0U : RxHeader.StdId;
+    msg.extId = (RxHeader.IDE == CAN_ID_EXT) ? RxHeader.ExtId : 0U;
     msg.dlc = RxHeader.DLC;
     msg.rtr = RxHeader.RTR;
     msg.ide = RxHeader.IDE;

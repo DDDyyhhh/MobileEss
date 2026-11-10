@@ -11,6 +11,9 @@ import rclpy
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 from geometry_msgs.msg import Twist
 from rclpy.node import Node
+from std_msgs.msg import Bool
+
+from .motion_permit import MotionPermit
 
 from .protocol import (
     localization_is_accepted,
@@ -42,6 +45,10 @@ class CmdVelCanBridge(Node):
         self.declare_parameter('control_period_sec', 0.05)
         self.declare_parameter('max_linear_speed_mps', 0.7)
         self.declare_parameter('max_angular_speed_radps', 0.5)
+        self.declare_parameter('allow_reverse', True)
+        self.declare_parameter('max_reverse_speed_mps', 1.0)
+        self.declare_parameter('require_motion_permit', False)
+        self.declare_parameter('motion_permit_timeout_sec', 0.25)
         self._interface = str(self.get_parameter('interface').value)
         self._status_can_id = int(self.get_parameter('status_can_id').value)
         self._timeout = float(self.get_parameter('command_timeout_sec').value)
@@ -51,6 +58,12 @@ class CmdVelCanBridge(Node):
         self._period = float(self.get_parameter('control_period_sec').value)
         self._max_linear = float(self.get_parameter('max_linear_speed_mps').value)
         self._max_angular = float(self.get_parameter('max_angular_speed_radps').value)
+        self._allow_reverse = bool(self.get_parameter('allow_reverse').value)
+        self._max_reverse = float(self.get_parameter('max_reverse_speed_mps').value)
+        self._require_permit = bool(self.get_parameter('require_motion_permit').value)
+        self._permit = MotionPermit(float(self.get_parameter('motion_permit_timeout_sec').value))
+        if not 0.0 < self._max_reverse <= 1.0:
+            raise ValueError('maximum reverse speed must be within the STM32 1.0-unit API limit')
         if (self._timeout <= 0.0 or self._status_timeout <= 0.0
                 or self._localization_timeout <= 0.0 or self._period <= 0.0):
             raise ValueError('command, status, and control periods must be positive')
@@ -73,6 +86,7 @@ class CmdVelCanBridge(Node):
                                  self._command_callback, 10)
         self.create_subscription(DiagnosticArray, '/fixed_map_localization/diagnostics',
                                  self._localization_callback, 10)
+        self.create_subscription(Bool, '/mower_console/motion_permit', self._permit_callback, 1)
         self.create_timer(self._period, self._send_control_frame)
         self.create_timer(1.0, self._publish_diagnostics)
         self._receiver = threading.Thread(target=self._receive_status, daemon=True)
@@ -90,6 +104,10 @@ class CmdVelCanBridge(Node):
         with self._lock:
             self._command = command
             self._last_command = time.monotonic()
+
+    def _permit_callback(self, msg: Bool) -> None:
+        with self._lock:
+            self._permit.update(msg.data, time.monotonic())
 
     def _localization_callback(self, diagnostics: DiagnosticArray) -> None:
         for status in diagnostics.status:
@@ -114,7 +132,8 @@ class CmdVelCanBridge(Node):
                 with self._lock:
                     self._api_state = data[4]
                     self._last_status = time.monotonic()
-                    if remote_takeover_detected(self._api_was_running, self._api_state):
+                    if (remote_takeover_detected(self._api_was_running, self._api_state)
+                            and not (self._require_permit and self._permit.revoked)):
                         self._remote_takeover = True
                         self._last_error = (
                             'STM32 API state dropped after API run; '
@@ -126,6 +145,9 @@ class CmdVelCanBridge(Node):
         with self._lock:
             if self._remote_takeover:
                 return
+            permitted = not self._require_permit or self._permit.valid(time.monotonic())
+            if self._require_permit and not self._permit.armed:
+                return  # Observation/startup must not emit any control CAN.
             status_fresh = time.monotonic() - self._last_status <= self._status_timeout
             localization_fresh = (
                 time.monotonic() - self._last_localization_acceptance
@@ -134,12 +156,20 @@ class CmdVelCanBridge(Node):
             state = reported_state if status_fresh else 0
             fresh = time.monotonic() - self._last_command <= self._timeout
             linear = self._command.linear.x if fresh and state == 2 and localization_fresh else 0.0
+            if not self._allow_reverse:
+                linear = max(0.0, linear)
+            linear = max(-self._max_reverse, linear)
             angular = self._command.angular.z if fresh and state == 2 and localization_fresh else 0.0
+            if not permitted:
+                linear = angular = 0.0
+                self._last_error = 'motion permit revoked or expired; restart required'
             api_was_running = self._api_was_running
         # The STM32 requires confirmed standby before API run, then confirmed run
         # before it may receive nonzero commands. A missing status frame must not
         # restart that handshake and demote the STM32 back to API standby.
-        requested_state = requested_api_state(api_was_running, reported_state)
+        requested_state = requested_api_state(api_was_running, reported_state) if permitted else 0
+        if not permitted and state == 0:
+            return
         payload = bytes((
             requested_state,
             quantize_command_speed(linear, self._max_linear) & 0xFF,

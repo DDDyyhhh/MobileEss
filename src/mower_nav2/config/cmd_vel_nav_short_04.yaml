@@ -1,0 +1,13 @@
+# Only for a reviewed short_04 navigation trial.
+cmd_vel_can_bridge:
+  ros__parameters:
+    interface: can0
+    command_topic: /cmd_vel_gated
+    status_can_id: 1287
+    command_timeout_sec: 0.25
+    status_timeout_sec: 0.25
+    localization_timeout_sec: 2.5
+    control_period_sec: 0.05
+    max_linear_speed_mps: 0.4
+    max_angular_speed_radps: 0.2
+    allow_reverse: false

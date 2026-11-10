@@ -115,9 +115,18 @@ typedef enum
 // #define MOWER_GEAR_3_MAX_TURN_SPEED 9.5f
 
 // --- 刀盘电机速度配置 (单位: PWM占空比百分比或其他) ---
-#define BLADE_SPEED_LEVEL_1 45.0f
-#define BLADE_SPEED_LEVEL_2 50.0f
-#define BLADE_SPEED_LEVEL_3 55.0f
+// #define BLADE_SPEED_LEVEL_1 45.0f
+// #define BLADE_SPEED_LEVEL_2 50.0f
+// #define BLADE_SPEED_LEVEL_3 55.0f
+
+#define BLADE_SPEED_LEVEL_1 14000.0f   // 1档: 2800 RPM * 5对极 = 14000 ERPM
+#define BLADE_SPEED_LEVEL_2 15500.0f  // 2档: 3100 RPM * 5对极 = 15500 ERPM
+#define BLADE_SPEED_LEVEL_3 16000.0f  // 3档: 3200 RPM * 5对极 = 16000 ERPM
+
+// #define BLADE_SPEED_LEVEL_1 10.0f
+// #define BLADE_SPEED_LEVEL_2 20.0f
+// #define BLADE_SPEED_LEVEL_3 30.0f
+
 #define BLADE_SPEED_OFF 0.0f
 
 // ==========================================

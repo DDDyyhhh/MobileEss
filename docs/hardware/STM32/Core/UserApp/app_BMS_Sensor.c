@@ -116,7 +116,7 @@
 #include "chassis_control.h"
 #include <string.h>
 #include <math.h>
-
+#include "mssd_can.h"
 // 引用外部对象
 extern osMessageQueueId_t Queue_SR04DataHandle;
 extern AXEBMS_RS485 my_bms;
@@ -126,12 +126,21 @@ extern float host_vx;
 extern float host_omega;
 extern uint16_t mapped_throttle;
 extern uint16_t mapped_steering;
+#if MOTOR_DRIVER_USED == DRIVER_TYPE_OID
 extern volatile ODrive_Data_t g_odrive_motors[ODRIVE_MAX_MOTORS];
+extern volatile OID_Data_t g_oid_drives[OID_MAX_NODES];
+#elif MOTOR_DRIVER_USED == DRIVER_TYPE_MSSD
+extern volatile MSSD_Data_t g_mssd_drives[MSSD_MAX_NODES];
+#endif
+volatile uint32_t g_wheel_speed_telemetry_drop_count = 0;
+volatile uint32_t g_wheel_speed_feedback_stale_count = 0;
 
 // 内部私有函数：打包并发送 0x507 核心 UI 帧
 static void Send_Telemetry_Core_Frame(void);
 // 内部私有函数：打包并发送 0x508/0x509 里程计帧
 static void Send_Telemetry_Odom_Frames(void);
+// 内部私有函数：打包并发送 0x50A 四轮实际线速度帧
+static void Send_Telemetry_Wheel_Speed_Frame(void);
 
 /**
  * @brief 传感器与反馈任务主循环
@@ -211,6 +220,9 @@ void StartTask_BMS_Sensor(void *argument)
             last_odom_tick = now;
             Send_Telemetry_Odom_Frames();
         }
+
+        // --- C. 发送四轮实际线速度帧 (0x50A): 周期 50ms ---
+        Send_Telemetry_Wheel_Speed_Frame();
 
         // 任务节拍 20ms
         osDelay(20);
@@ -328,4 +340,95 @@ static void Send_Telemetry_Odom_Frames(void)
     memcpy(&tx_buf[0], &pos_fl, 4);
     memcpy(&tx_buf[4], &pos_rl, 4);
     CAN_Enqueue_Message(0x509, tx_buf, 8, 0);
+}
+
+/**
+ * @brief 打包发送 0x50A 四轮实际线速度反馈
+ * @note  Byte 0~1: FL，Byte 2~3: FR，Byte 4~5: RL，Byte 6~7: RR。
+ *        每个字段为有符号 int16，大端序，单位 mm/s。
+ */
+static void Send_Telemetry_Wheel_Speed_Frame(void)
+{
+    static uint32_t last_speed_tick = 0;
+    uint32_t now_tick = HAL_GetTick();
+
+    if ((now_tick - last_speed_tick) < 50U)
+        return;
+    last_speed_tick = now_tick;
+
+    uint8_t tx_buf[8] = {0};
+    int16_t speed_fl;
+    int16_t speed_fr;
+    int16_t speed_rl;
+    int16_t speed_rr;
+    float speed_fl_f;
+    float speed_fr_f;
+    float speed_rl_f;
+    float speed_rr_f;
+    uint8_t stale_fl;
+    uint8_t stale_fr;
+    uint8_t stale_rl;
+    uint8_t stale_rr;
+
+#if MOTOR_DRIVER_USED == DRIVER_TYPE_OID
+    /* OID 返回 erpm，换算为统一对外协议的 mm/s。 */
+    float speed_scale = PI * WHEEL_DIAMETER * 1000.0f /
+                        ((float)OID_POLE_PAIRS * GEAR_RATIO * 60.0f);
+
+    stale_fl = (now_tick - g_oid_drives[OID_NODE_FL].actual_speed_update_tick) > 150U;
+    stale_fr = (now_tick - g_oid_drives[OID_NODE_FR].actual_speed_update_tick) > 150U;
+    stale_rl = (now_tick - g_oid_drives[OID_NODE_RL].actual_speed_update_tick) > 150U;
+    stale_rr = (now_tick - g_oid_drives[OID_NODE_RR].actual_speed_update_tick) > 150U;
+
+    speed_fl_f = stale_fl ? 0.0f : (float)g_oid_drives[OID_NODE_FL].actual_speed_erpm * speed_scale;
+    speed_fr_f = stale_fr ? 0.0f : (float)g_oid_drives[OID_NODE_FR].actual_speed_erpm * -speed_scale;
+    speed_rl_f = stale_rl ? 0.0f : (float)g_oid_drives[OID_NODE_RL].actual_speed_erpm * speed_scale;
+    speed_rr_f = stale_rr ? 0.0f : (float)g_oid_drives[OID_NODE_RR].actual_speed_erpm * -speed_scale;
+
+#elif MOTOR_DRIVER_USED == DRIVER_TYPE_MSSD
+    /* MSSD 返回机械 RPM，不需要 OID 的极对数换算。 */
+    float speed_scale = PI * WHEEL_DIAMETER * 1000.0f /
+                        (GEAR_RATIO * 60.0f);
+
+    stale_fl = (now_tick - g_mssd_drives[MSSD_NODE_LEFT].speed_r_update_tick) > 150U;
+    stale_fr = (now_tick - g_mssd_drives[MSSD_NODE_RIGHT].speed_r_update_tick) > 150U;
+    stale_rl = (now_tick - g_mssd_drives[MSSD_NODE_LEFT].speed_l_update_tick) > 150U;
+    stale_rr = (now_tick - g_mssd_drives[MSSD_NODE_RIGHT].speed_l_update_tick) > 150U;
+
+    /* 左侧安装方向与车辆坐标相反，保持与 OID 对外方向约定一致。 */
+    speed_fl_f = stale_fl ? 0.0f : (float)g_mssd_drives[MSSD_NODE_LEFT].actual_rpm_r * -speed_scale;
+    speed_fr_f = stale_fr ? 0.0f : (float)g_mssd_drives[MSSD_NODE_RIGHT].actual_rpm_r * speed_scale;
+    speed_rl_f = stale_rl ? 0.0f : (float)g_mssd_drives[MSSD_NODE_LEFT].actual_rpm_l * -speed_scale;
+    speed_rr_f = stale_rr ? 0.0f : (float)g_mssd_drives[MSSD_NODE_RIGHT].actual_rpm_l * speed_scale;
+#endif
+
+    g_wheel_speed_feedback_stale_count += stale_fl + stale_fr + stale_rl + stale_rr;
+
+    if (speed_fl_f > 32767.0f) speed_fl_f = 32767.0f;
+    if (speed_fl_f < -32768.0f) speed_fl_f = -32768.0f;
+    if (speed_fr_f > 32767.0f) speed_fr_f = 32767.0f;
+    if (speed_fr_f < -32768.0f) speed_fr_f = -32768.0f;
+    if (speed_rl_f > 32767.0f) speed_rl_f = 32767.0f;
+    if (speed_rl_f < -32768.0f) speed_rl_f = -32768.0f;
+    if (speed_rr_f > 32767.0f) speed_rr_f = 32767.0f;
+    if (speed_rr_f < -32768.0f) speed_rr_f = -32768.0f;
+
+    speed_fl = (int16_t)speed_fl_f;
+    speed_fr = (int16_t)speed_fr_f;
+    speed_rl = (int16_t)speed_rl_f;
+    speed_rr = (int16_t)speed_rr_f;
+
+    tx_buf[0] = (uint8_t)((uint16_t)speed_fl >> 8);
+    tx_buf[1] = (uint8_t)((uint16_t)speed_fl & 0xFFU);
+    tx_buf[2] = (uint8_t)((uint16_t)speed_fr >> 8);
+    tx_buf[3] = (uint8_t)((uint16_t)speed_fr & 0xFFU);
+    tx_buf[4] = (uint8_t)((uint16_t)speed_rl >> 8);
+    tx_buf[5] = (uint8_t)((uint16_t)speed_rl & 0xFFU);
+    tx_buf[6] = (uint8_t)((uint16_t)speed_rr >> 8);
+    tx_buf[7] = (uint8_t)((uint16_t)speed_rr & 0xFFU);
+
+    if (!CAN_Enqueue_Telemetry_Message(CHASSIS_WHEEL_SPEED_CAN_ID, tx_buf, sizeof(tx_buf), 0))
+    {
+        g_wheel_speed_telemetry_drop_count++;
+    }
 }

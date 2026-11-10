@@ -13,6 +13,7 @@
 #include "serial_port.h"
 #include "chassis_control.h"
 #include "odrive_can.h"
+#include <string.h>
 
 extern osMessageQueueId_t Queue_TxDataHandle;
 extern osSemaphoreId_t Sem_TxCompleteHandle;
@@ -82,40 +83,59 @@ void StartTask_CANTx(void *argument)
 
     for (;;)
     {
-        // 1. 永远等待队列里的消息 (不占CPU)
-        status = osMessageQueueGet(Queue_CanTxHandle, &msg, NULL, osWaitForever);
+        // 控制帧优先，并且只发送每个节点的最新速度指令。
+        if (CAN_TryGet_Control_Message(&msg))
+        {
+            status = osOK;
+        }
+        else if (CAN_TryGet_Telemetry_Message(&msg))
+        {
+            status = osOK;
+        }
+        else
+        {
+            status = osMessageQueueGet(Queue_CanTxHandle, &msg, NULL, 1U);
+        }
         
         if (status == osOK)
         {
             // 2. 组装硬件帧头
-            tx_header.StdId = msg.stdId & 0x7FF;
-            tx_header.IDE   = CAN_ID_STD;
-            
-            // 【核心修复】：根据队列里带的 rtr 标志位，正确设置帧类型
+            memset(&tx_header, 0, sizeof(tx_header));
+            tx_header.IDE = (msg.ide == CAN_ID_EXT) ? CAN_ID_EXT : CAN_ID_STD;
+            if (tx_header.IDE == CAN_ID_EXT)
+            {
+                tx_header.ExtId = msg.extId & 0x1FFFFFFFU;
+            }
+            else
+            {
+                tx_header.StdId = msg.stdId & 0x7FFU;
+            }
+
             tx_header.RTR   = (msg.rtr == 1) ? CAN_RTR_REMOTE : CAN_RTR_DATA;
-            
             tx_header.DLC   = msg.dlc;
             tx_header.TransmitGlobalTime = DISABLE;
 
-            // 3. 硬件邮箱管理 (防止硬件溢出)
+            // 邮箱被总线仲裁占用时放弃当前帧；绝不能中止已提交的电机控制帧。
             uint32_t start_tick = HAL_GetTick();
-            while (HAL_CAN_GetTxMailboxesFreeLevel(&hcan1) == 0) 
+            while (HAL_CAN_GetTxMailboxesFreeLevel(&hcan1) == 0)
             {
-                osDelay(1); // 释放 CPU，给硬件1ms时间去物理线上发报文
-                
-                // 超时 5ms 就放弃这一帧，去处理队列里的下一帧
-                // (发生这种情况通常是因为 CAN 的 CAN_H/L 线没接，或者总线路上没有活着的节点)
-                if (HAL_GetTick() - start_tick > 5) {
-                    goto NEXT_FRAME; 
+                osDelay(1);
+                if ((HAL_GetTick() - start_tick) > 5U)
+                {
+                    goto NEXT_FRAME;
                 }
             }
 
             // 4. 正式写入 STM32 硬件发送邮箱
-            // (注意：如果是 RTR 帧，HAL 库会忽略 data 指针，所以传 msg.data 没问题)
             HAL_CAN_AddTxMessage(&hcan1, &tx_header, msg.data, &mailbox);
             
 NEXT_FRAME:
             continue;
+        }
+
+        if (status != osOK)
+        {
+            osDelay(1);
         }
     }
 }

@@ -10,16 +10,16 @@ def test_parse_50a_big_endian_signed_wheel_speeds():
         -819, -810, -813, -811)
 
 
-def test_four_wheel_average_and_yaw_rate_use_690_mm_track():
-    linear_x, angular_z = body_twist_from_wheels((1159, 1158, 1159, 1160), 0.690)
+def test_four_wheel_average_and_yaw_rate_use_640_mm_track():
+    linear_x, angular_z = body_twist_from_wheels((1159, 1158, 1159, 1160), 0.640)
     assert linear_x == pytest.approx(1.159)
     assert angular_z == pytest.approx(0.0)
 
 
 def test_in_place_left_turn_has_negative_left_and_positive_right_rate():
-    linear_x, angular_z = body_twist_from_wheels((-387, 399, -387, 399), 0.690)
+    linear_x, angular_z = body_twist_from_wheels((-387, 399, -387, 399), 0.640)
     assert linear_x == pytest.approx(0.006)
-    assert angular_z == pytest.approx(1.1391304)
+    assert angular_z == pytest.approx(1.228125)
 
 
 def test_invalid_dlc_is_rejected():

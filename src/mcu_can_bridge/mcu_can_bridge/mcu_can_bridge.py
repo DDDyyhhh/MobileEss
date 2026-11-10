@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import socket
+import math
 import struct
 import threading
 import time
@@ -13,7 +14,8 @@ from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 from geometry_msgs.msg import TwistWithCovarianceStamped
 from rclpy.node import Node
 
-from .protocol import WHEEL_FEEDBACK_CAN_ID, body_twist_from_wheels, parse_wheel_feedback
+from .protocol import WHEEL_FEEDBACK_CAN_ID, parse_wheel_feedback
+from .wheel_yaw_model import corrected_body_twist
 
 
 CAN_RAW = getattr(socket, 'CAN_RAW', 1)
@@ -30,12 +32,16 @@ class McuCanBridge(Node):
         self.declare_parameter('can_id', WHEEL_FEEDBACK_CAN_ID)
         self.declare_parameter('frame_id', 'base_link')
         self.declare_parameter('twist_topic', '/wheel/odometry/twist')
+        self.declare_parameter('raw_twist_topic', '/wheel/odometry/twist_raw')
         self.declare_parameter('diagnostics_topic', '/wheel/diagnostics')
-        self.declare_parameter('track_width_m', 0.690)
+        self.declare_parameter('track_width_m', 0.640)
         self.declare_parameter('feedback_timeout_sec', 0.150)
         self.declare_parameter('recovery_frames', 3)
         self.declare_parameter('linear_x_variance', 0.0025)
-        self.declare_parameter('angular_z_variance', 0.0025)
+        self.declare_parameter('angular_z_variance', 0.04)
+        self.declare_parameter('right_yaw_model_enabled', False)
+        self.declare_parameter('right_spin_yaw_scale', 1.0)
+        self.declare_parameter('right_moving_yaw_scale', 1.0)
 
         self._interface = str(self.get_parameter('interface').value)
         self._can_id = int(self.get_parameter('can_id').value)
@@ -45,12 +51,25 @@ class McuCanBridge(Node):
         self._recovery_frames = max(1, int(self.get_parameter('recovery_frames').value))
         self._linear_x_variance = float(self.get_parameter('linear_x_variance').value)
         self._angular_z_variance = float(self.get_parameter('angular_z_variance').value)
+        if not all(math.isfinite(v) and v > 0
+                   for v in (self._linear_x_variance, self._angular_z_variance)):
+            raise ValueError('Wheel observation variances must be finite and positive')
+        if self.get_parameter('twist_topic').value == self.get_parameter('raw_twist_topic').value:
+            raise ValueError('Raw and modeled wheel twist topics must differ')
+        self._yaw_model_enabled = bool(self.get_parameter('right_yaw_model_enabled').value)
+        self._spin_scale = float(self.get_parameter('right_spin_yaw_scale').value)
+        self._moving_scale = float(self.get_parameter('right_moving_yaw_scale').value)
+        corrected_body_twist((0, 0, 0, 0), self._track_width_m,
+                             self._yaw_model_enabled, self._spin_scale, self._moving_scale)
         if self._track_width_m <= 0.0 or self._timeout_sec <= 0.0:
             raise ValueError('track_width_m and feedback_timeout_sec must be positive')
 
         self._twist_pub = self.create_publisher(
             TwistWithCovarianceStamped,
             str(self.get_parameter('twist_topic').value), 20)
+        self._raw_twist_pub = self.create_publisher(
+            TwistWithCovarianceStamped,
+            str(self.get_parameter('raw_twist_topic').value), 20)
         self._diagnostic_pub = self.create_publisher(
             DiagnosticArray,
             str(self.get_parameter('diagnostics_topic').value), 10)
@@ -65,6 +84,7 @@ class McuCanBridge(Node):
         self._active = False
         self._last_error = ''
         self._last_timeout_report = 0.0
+        self._last_estimate = None
         self._worker = threading.Thread(target=self._receive_loop, daemon=True)
         self._worker.start()
 
@@ -109,7 +129,9 @@ class McuCanBridge(Node):
             return
         try:
             wheels = parse_wheel_feedback(data)
-            linear_x, angular_z = body_twist_from_wheels(wheels, self._track_width_m)
+            estimate = corrected_body_twist(wheels, self._track_width_m,
+                                            self._yaw_model_enabled,
+                                            self._spin_scale, self._moving_scale)
         except ValueError as exc:
             with self._lock:
                 self._malformed_frames += 1
@@ -119,12 +141,14 @@ class McuCanBridge(Node):
         with self._lock:
             self._last_feedback_monotonic = now
             self._valid_frames += 1
+            self._last_estimate = estimate
             if self._valid_frames >= self._recovery_frames:
                 self._active = True
         if self._active:
-            self._publish_twist(linear_x, angular_z)
+            self._publish_twist(estimate.linear_x, estimate.raw_angular_z, self._raw_twist_pub)
+            self._publish_twist(estimate.linear_x, estimate.angular_z, self._twist_pub)
 
-    def _publish_twist(self, linear_x: float, angular_z: float) -> None:
+    def _publish_twist(self, linear_x: float, angular_z: float, publisher) -> None:
         message = TwistWithCovarianceStamped()
         message.header.stamp = self.get_clock().now().to_msg()
         message.header.frame_id = self._frame_id
@@ -132,7 +156,7 @@ class McuCanBridge(Node):
         message.twist.twist.angular.z = angular_z
         message.twist.covariance[0] = self._linear_x_variance
         message.twist.covariance[35] = self._angular_z_variance
-        self._twist_pub.publish(message)
+        publisher.publish(message)
 
     def _deactivate_if_timed_out(self) -> None:
         now = time.monotonic()
@@ -163,7 +187,15 @@ class McuCanBridge(Node):
                 'malformed_frames': str(self._malformed_frames),
                 'dropped_frames': str(self._dropped_frames),
                 'last_error': self._last_error,
+                'right_yaw_model_enabled': str(self._yaw_model_enabled).lower(),
+                'right_spin_yaw_scale': str(self._spin_scale),
+                'right_moving_yaw_scale': str(self._moving_scale),
             }
+            if self._last_estimate is not None:
+                values.update(raw_angular_z_radps=str(self._last_estimate.raw_angular_z),
+                              corrected_angular_z_radps=str(self._last_estimate.angular_z),
+                              yaw_scale=str(self._last_estimate.yaw_scale),
+                              yaw_model_regime=self._last_estimate.regime)
         status = DiagnosticStatus()
         status.name = 'mcu_can_bridge/wheel_feedback'
         status.level = DiagnosticStatus.OK if active else DiagnosticStatus.WARN

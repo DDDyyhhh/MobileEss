@@ -11,7 +11,8 @@ setup(
         ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/config', [
-            'config/local_ekf.yaml', 'config/global_localization.yaml']),
+            'config/local_ekf.yaml', 'config/global_localization.yaml',
+            'config/wheel_odometry.yaml']),
         ('share/' + package_name + '/launch', ['launch/localization.launch.py']),
     ],
     install_requires=['setuptools'],

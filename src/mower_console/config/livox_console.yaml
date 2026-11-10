@@ -1,0 +1,21 @@
+livox_obstacle_cloud:
+  ros__parameters:
+    self_filter_boxes:
+    - -0.55
+    - -0.18
+    - -0.42
+    - 0.42
+    - -0.15
+    - 1.2
+    output_topic: /nav2/mid360_obstacles
+    stamp_with_receipt_time: true
+    point_stride: 4
+    min_range: 0.2
+    max_range: 4.0
+    ground_cell_size: 0.2
+    ground_band: 0.1
+    obstacle_min_height: 0.15
+    obstacle_max_height: 1.5
+    min_points_per_cell: 3
+    obstacle_cell_size: 0.1
+    serialized_input: true

@@ -6,6 +6,7 @@ from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
 
@@ -24,6 +25,9 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument('initial_y_m', default_value='0.0'),
         DeclareLaunchArgument('initial_yaw_rad', default_value='0.0'),
         DeclareLaunchArgument('can_interface', default_value='can0'),
+        DeclareLaunchArgument('enable_can_feedback', default_value='true'),
+        DeclareLaunchArgument('collision_robot_radius', default_value='0.45'),
+        DeclareLaunchArgument('console_safety_profile', default_value='false'),
         DeclareLaunchArgument('start_localization', default_value='true'),
         DeclareLaunchArgument('start_fast_lio', default_value='true'),
         DeclareLaunchArgument(
@@ -44,6 +48,7 @@ def generate_launch_description() -> LaunchDescription:
                 FindPackageShare('mcu_can_bridge'), 'launch', 'localization.launch.py'])),
             launch_arguments={
                 'can_interface': LaunchConfiguration('can_interface'),
+                'enable_can_feedback': LaunchConfiguration('enable_can_feedback'),
                 'enable_global_localization': 'false',
             }.items(),
             condition=IfCondition(LaunchConfiguration('start_localization')),
@@ -96,7 +101,12 @@ def generate_launch_description() -> LaunchDescription:
                 'output_topic': '/cmd_vel_gated',
                 'costmap_topic': '/local_costmap/costmap_raw',
                 'odom_topic': '/odometry/filtered',
-                'robot_radius': 0.45,
+                'robot_radius': ParameterValue(LaunchConfiguration('collision_robot_radius'), value_type=float),
+                'filled_footprint': ParameterValue(LaunchConfiguration('console_safety_profile'), value_type=bool),
+                'require_rear_observed': ParameterValue(LaunchConfiguration('console_safety_profile'), value_type=bool),
+                'rotation_slip_margin': ParameterValue(PythonExpression([
+                    "0.25 if '", LaunchConfiguration('console_safety_profile'), "' == 'true' else 0.0"
+                ]), value_type=float),
                 'prediction_horizon': 2.0,
                 'prediction_dt': 0.05,
                 'command_timeout': 0.25,
@@ -110,7 +120,8 @@ def generate_launch_description() -> LaunchDescription:
             package='mcu_can_bridge',
             executable='cmd_vel_can_bridge',
             name='cmd_vel_can_bridge',
-            parameters=[LaunchConfiguration('cmd_vel_params_file')],
+            parameters=[LaunchConfiguration('cmd_vel_params_file'),
+                        {'interface': LaunchConfiguration('can_interface')}],
             condition=IfCondition(PythonExpression([
                 "'", LaunchConfiguration('enable_motion'), "' == 'true' and '",
                 LaunchConfiguration('safety_map_approved'), "' == 'true'",

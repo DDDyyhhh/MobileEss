@@ -1,0 +1,20 @@
+[Unit]
+Description=MobileEss browser console and observation stack
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=cat
+WorkingDirectory=/home/cat/MobileEss_ws
+Environment=PYTHONUNBUFFERED=1
+ExecStartPre=+/usr/bin/python3 /home/cat/MobileEss_ws/install/mower_console/share/mower_console/scripts/prepare_can.py
+ExecStart=/bin/bash -c 'source /opt/ros/humble/setup.bash && source /home/cat/MobileEss_ws/install/setup.bash && exec ros2 launch mower_console console.launch.py observation_only:=true'
+KillMode=control-group
+TimeoutStopSec=25
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

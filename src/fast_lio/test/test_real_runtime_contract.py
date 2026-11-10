@@ -51,6 +51,10 @@ def test_real_odometry_interface_is_parameterized_for_ekf_input():
     assert 'common.body_frame: "livox_frame"' in config
     assert 'common.odometry_topic: "/fast_lio/odometry"' in config
     assert "publish.tf_en: false" in config
+    assert "mapping.extrinsic_est_en: false" in config
+    assert "common.extrinsic_est_en" not in config
+    assert "max_iteration: 3" in config
+    assert "maximum_iteration" not in config
     assert 'DeclareLaunchArgument("odom_frame", default_value="odom")' in launch
     assert 'DeclareLaunchArgument("body_frame", default_value="livox_frame")' in launch
     assert '"common.odom_frame": LaunchConfiguration("odom_frame")' in launch

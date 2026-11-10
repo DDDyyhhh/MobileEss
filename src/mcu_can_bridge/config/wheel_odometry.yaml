@@ -1,0 +1,8 @@
+# Field-fit candidate from two RIGHT turns, 2026-10-19. Raw twist remains available.
+# Wheel yaw is deliberately excluded from EKF fusion pending independent validation.
+mcu_can_bridge:
+  ros__parameters:
+    right_yaw_model_enabled: true
+    right_spin_yaw_scale: 1.246
+    right_moving_yaw_scale: 0.428
+    angular_z_variance: 0.04

@@ -10,7 +10,9 @@ from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 from geometry_msgs.msg import Twist
 from nav2_msgs.msg import Costmap
 from nav_msgs.msg import Odometry
+from sensor_msgs.msg import PointCloud2
 from rclpy.node import Node
+from std_msgs.msg import Bool
 
 
 class CollisionGate(Node):
@@ -28,14 +30,29 @@ class CollisionGate(Node):
         self.declare_parameter('command_timeout', 0.25)
         self.declare_parameter('costmap_timeout', 0.30)
         self.declare_parameter('odom_timeout', 0.30)
+        self.declare_parameter('obstacle_topic', '/nav2/mid360_obstacles')
+        self.declare_parameter('obstacle_timeout', 0.30)
         self.declare_parameter('collision_cost', 253)
+        self.declare_parameter('filled_footprint', False)
+        self.declare_parameter('rotation_slip_margin', 0.0)
+        self.declare_parameter('require_rear_observed', False)
+        self._filled = bool(self.get_parameter('filled_footprint').value)
+        self._slip = float(self.get_parameter('rotation_slip_margin').value)
+        self._require_rear = bool(self.get_parameter('require_rear_observed').value)
+        self._rear_observed = False
+        self._rear_time = 0.0
         self._radius = float(self.get_parameter('robot_radius').value)
         self._horizon = float(self.get_parameter('prediction_horizon').value)
         self._dt = float(self.get_parameter('prediction_dt').value)
         self._command_timeout = float(self.get_parameter('command_timeout').value)
         self._costmap_timeout = float(self.get_parameter('costmap_timeout').value)
         self._odom_timeout = float(self.get_parameter('odom_timeout').value)
+        self._obstacle_timeout = float(self.get_parameter('obstacle_timeout').value)
+        self._obstacle_time = 0.0
         self._collision_cost = int(self.get_parameter('collision_cost').value)
+        if (not all(math.isfinite(v) for v in (self._radius,self._horizon,self._dt,self._slip)) or
+                self._radius <= 0 or self._horizon <= 0 or self._dt <= 0 or self._slip < 0):
+            raise ValueError('invalid footprint, slip or prediction geometry')
         self._command = Twist(); self._costmap = None; self._odom = None
         self._command_time = self._costmap_time = self._odom_time = 0.0
         self._last_reason = 'awaiting command, costmap, and odometry'
@@ -45,16 +62,29 @@ class CollisionGate(Node):
         self.create_subscription(Twist, str(self.get_parameter('input_topic').value), self._on_command, 10)
         self.create_subscription(Costmap, str(self.get_parameter('costmap_topic').value), self._on_costmap, 10)
         self.create_subscription(Odometry, str(self.get_parameter('odom_topic').value), self._on_odom, 10)
+        self.create_subscription(PointCloud2, str(self.get_parameter('obstacle_topic').value), self._on_obstacle, 1)
+        self.create_subscription(Bool, '/mower_console/rear_observed', self._on_rear, 1)
         self.create_timer(0.05, self._tick)
 
     def _on_command(self, msg: Twist) -> None:
         self._command = msg; self._command_time = time.monotonic()
+
+    def _on_rear(self, msg: Bool) -> None:
+        self._rear_observed = msg.data
+        self._rear_time = time.monotonic()
 
     def _on_costmap(self, msg: Costmap) -> None:
         self._costmap = msg; self._costmap_time = time.monotonic()
 
     def _on_odom(self, msg: Odometry) -> None:
         self._odom = msg; self._odom_time = time.monotonic()
+
+    def _on_obstacle(self, msg: PointCloud2) -> None:
+        # Empty clouds are valid clear-space observations; silence is not.
+        age = (self.get_clock().now().nanoseconds / 1e9
+               - msg.header.stamp.sec - msg.header.stamp.nanosec / 1e9)
+        if msg.header.frame_id and -0.05 <= age <= self._obstacle_timeout:
+            self._obstacle_time = time.monotonic()
 
     def _cell_cost(self, x: float, y: float) -> int | None:
         m = self._costmap
@@ -65,6 +95,13 @@ class CollisionGate(Node):
         return int(m.data[my * md.size_x + mx])
 
     def _collision(self, cmd: Twist) -> bool:
+        if not all(math.isfinite(v) for v in (cmd.linear.x, cmd.angular.z)):
+            self._last_reason = 'non-finite velocity command'
+            return True
+        if (cmd.linear.x < 0 and getattr(self, '_require_rear', False) and
+                (not self._rear_observed or time.monotonic()-self._rear_time > .30)):
+            self._last_reason = 'rear observation unavailable or stale'
+            return True
         if self._costmap is None or self._odom is None:
             self._last_reason = 'missing costmap or odometry'
             return True
@@ -83,6 +120,13 @@ class CollisionGate(Node):
                 (radius * math.cos(math.radians(angle)),
                  radius * math.sin(math.radians(angle)))
                 for angle in range(0, 360, angle_step))
+        if getattr(self, '_filled', False):
+            radius = self._radius + (self._slip if abs(cmd.linear.x) < .01 and abs(cmd.angular.z) > .001 else 0.)
+            resolution = self._costmap.metadata.resolution
+            n = math.ceil((radius+resolution)/resolution)
+            footprint_offsets = [(i*resolution,j*resolution)
+                                 for i in range(-n,n+1) for j in range(-n,n+1)
+                                 if math.hypot(i*resolution,j*resolution) <= radius+resolution*math.sqrt(2)/2]
         for step in range(steps + 1):
             for dx, dy in footprint_offsets:
                 cost = self._cell_cost(x + dx, y + dy)
@@ -104,10 +148,11 @@ class CollisionGate(Node):
         now = time.monotonic()
         valid = (now - self._command_time <= self._command_timeout and
                  now - self._costmap_time <= self._costmap_timeout and
-                 now - self._odom_time <= self._odom_timeout)
+                 now - self._odom_time <= self._odom_timeout and
+                 now - self._obstacle_time <= self._obstacle_timeout)
         out = Twist()
         if not valid:
-            self._last_reason = 'stale command, costmap, or odometry'
+            self._last_reason = 'stale command, costmap, odometry, or obstacle cloud'
         elif not self._collision(self._command):
             out = self._command
         self._pub.publish(out)
@@ -124,6 +169,7 @@ class CollisionGate(Node):
             'command_age_sec': f'{now - self._command_time:.3f}',
             'costmap_age_sec': f'{now - self._costmap_time:.3f}',
             'odom_age_sec': f'{now - self._odom_time:.3f}',
+            'obstacle_age_sec': f'{now - self._obstacle_time:.3f}',
         }.items()]
         diagnostics = DiagnosticArray()
         diagnostics.header.stamp = self.get_clock().now().to_msg()
