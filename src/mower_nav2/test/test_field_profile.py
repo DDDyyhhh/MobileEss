@@ -46,24 +46,3 @@ def test_cad_footprint_and_virtual_bumper_cover_vehicle_corners():
     assert controller['ObstaclesCritic.consider_footprint'] is True
     assert controller['CostCritic.consider_footprint'] is True
 
-
-def test_first_ground_profile_caps_every_command_stage_and_keeps_collision_geometry():
-    params = yaml.safe_load((ROOT / 'config/nav2_ground_first.yaml').read_text())
-    original = yaml.safe_load((ROOT / 'config/nav2_field.yaml').read_text())
-    controller = params['controller_server']['ros__parameters']['FollowPath']
-    smoother = params['velocity_smoother']['ros__parameters']
-    bridge = yaml.safe_load((ROOT / 'config/cmd_vel_ground_first.yaml').read_text())['cmd_vel_can_bridge']['ros__parameters']
-    assert controller['vx_max'] == smoother['max_velocity'][0] == bridge['max_linear_speed_mps'] == 0.1
-    assert controller['wz_max'] == smoother['max_velocity'][2] == bridge['max_angular_speed_radps'] == 0.2
-    assert controller['vx_min'] == smoother['min_velocity'][0] == 0.0
-    assert bridge['allow_reverse'] is False
-    assert bridge['command_topic'] == '/cmd_vel_gated'
-    for costmap in ('global_costmap', 'local_costmap'):
-        assert params[costmap] == original[costmap]
-
-
-def test_ground_alignment_profile_refreshes_tf_without_relaxing_localization_gates():
-    normal = yaml.safe_load((ROOT/'config/localizer_field.yaml').read_text())
-    align = yaml.safe_load((ROOT/'config/localizer_ground_align.yaml').read_text())
-    normal['fixed_map_localizer']['ros__parameters']['tf_heartbeat_rate_hz'] = 30.0
-    assert align == normal

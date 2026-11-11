@@ -77,63 +77,7 @@ def test_nav2_limits_and_livox_obstacle_layer_contract():
     assert local_costmap['inflation_layer']['cost_scaling_factor'] == 5.0
 
 
-
-def test_dwb_comparison_profile_is_low_speed_and_position_only():
-    params = yaml.safe_load((ROOT / 'config' / 'nav2_params_dwb_comparison.yaml').read_text())
-    controller = params['controller_server']['ros__parameters']
-    dwb = controller['FollowPath']
-    smoother = params['velocity_smoother']['ros__parameters']
-    assert controller['controller_frequency'] == 20.0
-    assert controller['goal_checker_plugins'] == ['position_goal_checker']
-    assert controller['position_goal_checker']['plugin'] == 'nav2_controller::PositionGoalChecker'
-    assert dwb['plugin'] == 'dwb_core::DWBLocalPlanner'
-    assert dwb['max_vel_x'] == 0.20
-    assert dwb['max_vel_theta'] == 0.50
-    assert dwb['max_speed_xy'] == 0.20
-    assert dwb['critics'] == [
-        'RotateToGoal', 'Oscillation', 'ObstacleFootprint',
-        'GoalAlign', 'PathAlign', 'PathDist', 'GoalDist']
-    assert smoother['max_velocity'] == [0.20, 0.0, 0.50]
-    assert params['bt_navigator']['ros__parameters']['default_nav_to_pose_bt_xml'].endswith(
-        'navigate_to_pose_dwb_comparison.xml')
-
-
-def test_dwb_box_lookahead_trial_changes_only_simulation_time():
-    base = yaml.safe_load((ROOT / 'config' / 'nav2_params_dwb_box_0p15.yaml').read_text())
-    trial = yaml.safe_load((ROOT / 'config' / 'nav2_params_dwb_box_0p15_lookahead_2s.yaml').read_text())
-    base_dwb = base['controller_server']['ros__parameters']['FollowPath']
-    trial_dwb = trial['controller_server']['ros__parameters']['FollowPath']
-    deltas = {
-        key: (base_dwb.get(key), trial_dwb.get(key))
-        for key in set(base_dwb) | set(trial_dwb)
-        if base_dwb.get(key) != trial_dwb.get(key)}
-    assert deltas == {'sim_time': (1.0, 2.0)}
-    assert trial_dwb['sim_time'] * trial_dwb['max_vel_x'] == 0.30
-    assert trial_dwb['vtheta_samples'] == 11
-
-
-def test_dwb_box_angular_resolution_trial_changes_only_vtheta_samples():
-    base = yaml.safe_load((ROOT / 'config' / 'nav2_params_dwb_box_0p15_lookahead_2s.yaml').read_text())
-    trial = yaml.safe_load(
-        (ROOT / 'config' / 'nav2_params_dwb_box_0p15_lookahead_2s_vtheta21.yaml').read_text())
-    base_dwb = base['controller_server']['ros__parameters']['FollowPath']
-    trial_dwb = trial['controller_server']['ros__parameters']['FollowPath']
-    deltas = {
-        key: (base_dwb.get(key), trial_dwb.get(key))
-        for key in set(base_dwb) | set(trial_dwb)
-        if base_dwb.get(key) != trial_dwb.get(key)}
-    assert deltas == {'vtheta_samples': (11, 21)}
-    assert trial_dwb['sim_time'] == 2.0
-    assert trial_dwb['max_vel_x'] == 0.15
-    assert trial_dwb['max_vel_theta'] == 0.50
-
-
-def test_dwb_comparison_bt_does_not_issue_automatic_spin_recovery():
-    bt = (ROOT / 'behavior_trees' / 'navigate_to_pose_dwb_comparison.xml').read_text()
-    assert '<FollowPath path="{path}" controller_id="FollowPath"/>' in bt
-    assert '<Spin' not in bt
-    assert '<BackUp' not in bt
-
+def test_navigation_launch_wires_safety_chain_and_obstacle_cloud():
     launch = (ROOT / 'launch' / 'mower_navigation.launch.py').read_text()
     assert "DeclareLaunchArgument('nav2_params_file'" in launch
     assert "'params_file': LaunchConfiguration('nav2_params_file')" in launch
@@ -171,22 +115,3 @@ def test_dwb_comparison_bt_does_not_issue_automatic_spin_recovery():
     assert 'TimedDynamicObstacleLayer' not in converter
     assert 'self._clearing_publisher' not in converter
     assert 'self._cloud_callback, 1)' in converter
-    capture = (ROOT / 'scripts' / 'capture_mppi_observation.sh').read_text()
-    assert "node_list=\"$(ros2 node list)\"" in capture
-    assert 'node_exists()' in capture
-    assert "grep -Fxq \"$1\" <<< \"$node_list\"" in capture
-    assert "grep -Fxq '/cmd_vel_can_bridge'" not in capture
-    assert "pgrep -fo '(/|^)controller_server" in capture
-    assert 'FollowPath.visualize true' in capture
-    assert 'FollowPath.visualize false' in capture
-    assert '/trajectories' in capture
-    assert 'does not publish /local_plan' in capture
-    assert '/cmd_vel_nav' in capture
-    assert 'controller_top.txt' in capture
-    assert 'mode must be \'performance\' or \'visualize\'' in capture
-    assert 'duration must be below 15 s' in capture
-    assert '/collision_gate/diagnostics' in capture
-    assert '--include-hidden-topics' in capture
-    assert 'first_cmd_vel_nav.yaml' in capture
-    assert 'Waiting up to ${goal_timeout_sec}s for an active MPPI /cmd_vel_nav command' in capture
-    assert '/follow_path/_action/status' in capture

@@ -49,7 +49,6 @@ The coordinate hierarchy enforces strict spatial conventions:
 - `src/mower_nav2/`: Navigation stack integrations including costmap generators, custom Nav2 behavior trees, PCD-to-occupancy converters, and the `collision_gate` node.
 - `src/timed_dynamic_obstacle_layer/`: C++ Nav2 costmap plugin for fading moving obstacles over time.
 - `docs/`: System documentation, including `hardware/STM32/` (CAN protocols), `maps/` (surveyed parking lots and metadata), and `agents/` (tracker rules and domain conventions).
-- `.scratch/`: Active feature specifications, scratch work, and issue trackers.
 
 ---
 

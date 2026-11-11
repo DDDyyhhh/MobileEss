@@ -107,42 +107,6 @@ RK3588 uses a 5 Hz MPPI controller budget. Humble requires controller period
 trajectory work; the 20 Hz velocity smoother and final Collision Gate remain
 independent.
 
-For a supervised MPPI diagnosis, keep `enable_motion:=false` and first record a
-no-marker performance baseline:
-
-```bash
-src/mower_nav2/scripts/capture_mppi_observation.sh
-```
-
-The script refuses to run while `/cmd_vel_can_bridge` exists, records a
-20-second rosbag and `controller_top.txt` under `~/mppi_observations/`, and
-records the actual MPPI parameter values plus the raw controller topic
-`/cmd_vel_nav`. Confirm the controller baseline before candidate tuning:
-`/cmd_vel_nav` should approach 5 Hz and controller deadline-miss warnings must
-be absent or rare. The final `/cmd_vel` remains the smoother's 20 Hz output and
-is not a controller-rate measurement.
-
-Only after that baseline, make a separate active-goal candidate capture. Because
-`enable_motion:=false` deliberately prevents progress and the configured
-progress checker aborts after 15 seconds, the script requires a shorter marker
-capture:
-
-```bash
-src/mower_nav2/scripts/capture_mppi_observation.sh \
-  ~/mppi_observations 10 visualize
-```
-
-It starts rosbag and verifies that `FollowPath.visualize` became true, then
-waits for the first non-hidden MPPI `/cmd_vel_nav` output; only then does its
-10-second capture interval start. Send the navigation goal when prompted.
-add `/trajectories` as a `MarkerArray` and compare its `Candidate Trajectories`
-and `Optimal Trajectory` namespaces with `/transformed_global_plan`,
-`/local_costmap/costmap_raw`, `/cmd_vel_nav`, `/cmd_vel_gated`, and
-`/collision_gate/diagnostics` at the obstacle timestamp. Humble MPPI does not
-publish `/local_plan`. Do not tune critics
-until that capture identifies whether bypass candidates are absent, rejected by
-costmap geometry, or merely out-scored by path-following critics.
-
 A fail-closed Collision Gate follows Nav2's velocity smoother:
 `controller_server -> /cmd_vel_nav -> velocity_smoother -> /cmd_vel ->
 collision_gate -> /cmd_vel_gated -> cmd_vel_can_bridge`. It predicts the
