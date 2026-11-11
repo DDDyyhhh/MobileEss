@@ -10,9 +10,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Development environment
 
-- The local machine is an **editing-only** checkout. `mutagen.yml` synchronizes local `~/MobileEss/src` to the RK3588; generated `build/`, `install/`, `log/`, `.vscode`, and Python cache files are intentionally not synchronized.
-- Run every build, test, ROS node, bag replay, and hardware check on the RK3588 through SSH. The board workspace is `~/MobileEss_ws`; do not treat local build artifacts as evidence of a passing change.
-- The checked-in Mutagen target currently says `~/Mobile_Ess/src`, while the execution workspace is `~/MobileEss_ws/src`. Confirm the active synchronization session and board checkout before relying on a newly edited source file.
+- The local machine is an **editing-only** checkout. A Mutagen session (its `mutagen.yml` is not checked into this repo) synchronizes local `src/` to the RK3588 board workspace `~/MobileEss_ws/src` (board user `cat`, LAN address `192.168.10.81` per `src/mower_console/README.md`). Generated `build/`, `install/`, `log/`, `.vscode`, and Python cache files are not synchronized. Check `mutagen sync list` before relying on a newly edited file being on the board, and do not overwrite unreviewed board-side diffs.
+- Run every build, ROS node, bag replay, and hardware check on the RK3588 through SSH. Host-side runs are limited to offline logic tests and the console frontend build (see below); never treat them as vehicle evidence.
 - Commands below use the SSH host alias `rk3588`. Each starts a login shell, sources ROS 2 Humble, and uses the board overlay.
 
 ```bash
@@ -32,7 +31,7 @@ ssh rk3588 'bash -lc "
 "'
 ```
 
-Valid package names include `fast_lio`, `livox_ros_driver2`, `mcu_can_bridge`, `mobileess_rtk`, `mower_nav2`, and `timed_dynamic_obstacle_layer`.
+Valid package names include `fast_lio`, `livox_ros_driver2`, `mcu_can_bridge`, `mobileess_rtk`, `mower_console`, `mower_nav2`, and `timed_dynamic_obstacle_layer`. `mower_console` installs its prebuilt `web/dist`, so rebuild the frontend before `colcon build` when the UI changed.
 
 ## Tests and lint
 
@@ -48,6 +47,7 @@ ssh rk3588 'bash -lc "
     src/fast_lio/test \
     src/mcu_can_bridge/test \
     src/mobileess_rtk/test \
+    src/mower_console/test \
     src/mower_nav2/test \
     src/timed_dynamic_obstacle_layer/test
 "'
@@ -70,6 +70,17 @@ ssh rk3588 'bash -lc "
   colcon test --packages-select timed_dynamic_obstacle_layer &&
   colcon test-result --verbose
 "'
+```
+
+Host-side offline checks (logic only, no ROS hardware):
+
+```bash
+PYTHONPATH=src/mobileess_rtk python3 -m pytest src/mobileess_rtk/test
+PYTHONPATH=src/mcu_can_bridge python3 -m pytest src/mcu_can_bridge/test
+PYTHONPATH=src/mower_console:src/mcu_can_bridge python3 -m pytest src/mower_console/test
+
+# Console frontend (React + three.js, Vite/Vitest)
+cd src/mower_console/web && npm ci && npm run build && npm test
 ```
 
 `src/fast_lio/test/run_isolated_replay.sh` and `run_live_fastlio_observation.sh` are deployment diagnostics, not ordinary unit tests: they require their documented board environments, maps, and bags. Do not use `src/livox_ros_driver2/build.sh` for routine development: it deletes workspace build products and replaces package/launch files while selecting a ROS version.
@@ -106,6 +117,7 @@ Nav2 controller -> /cmd_vel_nav -> velocity_smoother -> /cmd_vel
 - `mobileess_rtk` bridges UM982 NMEA/NTRIP to `/rtk/fix`, `/rtk/heading`, and diagnostics. Use a board-local RTK parameter file for serial and NTRIP values; do not commit `*.local.yaml` credentials.
 - `mower_nav2` assembles fixed-map localization, Nav2, Livox obstacle adaptation, `TimedDynamicObstacleLayer`, and the final collision gate. Its global costmap is the reviewed static planning map; dynamic Mid-360 evidence belongs only in the local costmap.
 - `timed_dynamic_obstacle_layer` is the C++ Nav2 plugin that stores short-lived local obstacle cells.
+- `mower_console` is the browser console served from the RK3588 (`aiohttp` server in `server.py`, ROS bridge in `ros_adapter.py`, React frontend in `web/`). `console.launch.py` checks the fixed-map assets (`map.yaml/.pgm/.pcd`, `livox.json`, `mid360_real.yaml`) and starts two Smac lattice planner processes (forward and reverse, which cannot share one process because Humble caches the lattice table per file). One console task owns motion at a time, and each start permit is single-use. The systemd service always launches with `observation_only:=true`. Motion needs a separate board-local config with `motion_enabled`/`accepted_capabilities` plus an explicit `observation_only:=false`. Run records go to `~/MobileEss_data/console-runs/` on the board. Console field reports live in `docs/console/`.
 
 ## Runtime and safety contracts
 
@@ -114,17 +126,3 @@ Nav2 controller -> /cmd_vel_nav -> velocity_smoother -> /cmd_vel
 - Permanent PCD and approved 2D maps are immutable during normal operation. Create a new map version and review its PGM, boundary, keep-out, and speed-zone assets before deploying it. See `docs/maps/` for capture and fixed-map validation procedures.
 - Keep real-vehicle bringup observation-only by default. The Nav2 launch defaults to `enable_motion:=false` and `safety_map_approved:=false`; set **both** true only after the safety map and STM32 `0x005` handoff have been validated at low speed.
 - Before a live localization or map-capture check, stop existing command, CAN relay, Nav2, TF/EKF, unlock, and blade publishers as required by the relevant procedure. On a failed field check, command zero speed/stop safely and retain the rosbag, diagnostics, and CAN evidence for investigation.
-
-## Known launch packaging gap
-
-`src/mower_nav2/setup.py` currently does not install `launch/mower_navigation.launch.py`. Therefore `ros2 launch mower_nav2 mower_navigation.launch.py` is not guaranteed to work after a normal `colcon build` even though package documentation shows it. Before relying on the integrated Nav2 launch, verify on the RK3588:
-
-```bash
-ssh rk3588 'bash -lc "
-  source /opt/ros/humble/setup.bash &&
-  source ~/MobileEss_ws/install/setup.bash &&
-  test -f \"\$(ros2 pkg prefix mower_nav2)/share/mower_nav2/launch/mower_navigation.launch.py\"
-"'
-```
-
-Repair and test the package installation rule before treating that launch as a standard board command.
