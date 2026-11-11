@@ -9,15 +9,26 @@ import logging
 import os
 from pathlib import Path
 import secrets
+import struct
 import time
 
 from aiohttp import web
+import numpy as np
 import yaml
 
 from .assets import MapAssets
 from .domain import Console, Refused
 
 logger = logging.getLogger(__name__)
+
+
+POINT_KINDS = {'cloud': 1, 'obstacles': 2}
+
+
+def encode_points(kind, xyz):
+    """Binary frame: u8 kind, 3 pad bytes, u32 count, then float32 xyz."""
+    data = np.ascontiguousarray(np.asarray(xyz, dtype='<f4').reshape(-1, 3))
+    return struct.pack('<B3xI', POINT_KINDS[kind], len(data))+data.tobytes()
 
 
 def create_app(console, assets, pairing_code, static_dir):
@@ -138,16 +149,21 @@ def create_app(console, assets, pairing_code, static_dir):
     async def publish(peer):
         # One page owns one sender. A cancelled/slow old connection cannot
         # terminate or block the state stream of a refreshed page.
-        last_cloud = -1.
+        last_cloud, sent = -1., {}
         try:
             while not peer.closed:
-                payload = {'type': 'state', 'state': console.state()}
-                now = time.monotonic()
-                if now-last_cloud < .5:
-                    payload['state'].pop('cloud', None)
-                else:
-                    last_cloud = now
-                await asyncio.wait_for(peer.send_json(payload), .5)
+                await asyncio.wait_for(peer.send_json({'type': 'state', 'state': console.state()}), .5)
+                # Point clouds go as binary frames, only when they changed;
+                # the registered display cloud at most every 0.5 s.
+                points = getattr(console.adapter, 'points', None)
+                for kind, (seq, xyz) in (points() if points else {}).items():
+                    now = time.monotonic()
+                    if sent.get(kind) == seq or (kind == 'cloud' and now-last_cloud < .5):
+                        continue
+                    await asyncio.wait_for(peer.send_bytes(encode_points(kind, xyz)), .5)
+                    sent[kind] = seq
+                    if kind == 'cloud':
+                        last_cloud = now
                 await asyncio.sleep(.2)
         except (ConnectionError, asyncio.TimeoutError):
             logger.info('Closing an unresponsive console state connection')

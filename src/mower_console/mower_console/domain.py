@@ -2,17 +2,54 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import json
 import math
 import secrets
 import time
 
-from .geometry import angle, distance_to_path, finite_pose, length, split_path
+from .geometry import angle, distance_to_path, finite_pose, length, nearest_index, split_path
+
+# Board-local config may override these; they enter each preview's digest.
+OBSTACLE_DEFAULTS = dict(
+    obstacle_wait_s=10.,          # stopped wait before planning a detour
+    obstacle_total_wait_s=60.,    # all obstacle waits of one task
+    max_replans=3,                # accepted detours per task
+    # Gate disk radius .70 + local inscribed radius .404: closer live points
+    # make the collision gate stop a resumed or detoured command again.
+    obstacle_clearance_m=1.1,
+)
 
 
 class Refused(ValueError):
     pass
+
+
+def remaining_poses(route, index, pose):
+    """The current pose and every route pose still ahead of it."""
+    segment = route[index]
+    ahead = segment['poses'][nearest_index(segment['poses'], pose[:2]):]
+    return [list(pose)] + ahead + [p for later in route[index+1:] for p in later['poses']]
+
+
+def resume_route(route, index, pose):
+    """Trim the interrupted segment to what is left from the current pose."""
+    route = copy.deepcopy(route)
+    segment = route[index]
+    if segment['kind'] == 'rotate':
+        x, y = segment['poses'][0][:2]
+        turn = segment['turn']-angle(pose[2]-segment['poses'][0][2])
+        if abs(turn) < math.radians(2):
+            return route, index+1
+        route[index] = dict(segment, turn=turn,
+                            poses=[[x, y, pose[2]], [x, y, segment['poses'][-1][2]]])
+    else:
+        poses = segment['poses'][nearest_index(segment['poses'], pose[:2]):]
+        if len(poses) < 2 or length(poses) < .05:
+            return route, index+1
+        route[index] = dict(segment, poses=poses, length_m=length(poses))
+    return route, index
 
 
 class Console:
@@ -69,9 +106,11 @@ class Console:
         async with self.lock:
             self.require_owner(session)
             self.ensure_idle()
-            if not isinstance(goal, list) or len(goal) != 2 or not all(
-                    isinstance(v, (int, float)) and math.isfinite(v) for v in goal):
-                raise Refused('目标必须是两个有限地图坐标')
+            if not isinstance(goal, list) or len(goal) not in (2, 3) or not all(
+                    isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+                    for v in goal):
+                raise Refused('目标必须是有限地图坐标，可附加到达朝向')
+            goal = [float(v) for v in goal]
             snapshot = self.adapter.snapshot()
             if not snapshot.get('localized') or not snapshot.get('stationary'):
                 raise Refused('等待可靠定位和新鲜停稳反馈')
@@ -161,45 +200,25 @@ class Console:
         watcher = asyncio.create_task(watch_connection())
         try:
             await self.adapter.arm()
-            travelled = reverse = 0.
-            previous = self.adapter.snapshot()['pose']
-            for index, segment in enumerate(plan['segments']):
+            route = copy.deepcopy(plan['segments'])
+            self.task.update(route=route, replans=0, substate='DRIVING', waiting_s=0.,
+                             obstacle_reason='', replan_error='')
+            track = dict(previous=self.adapter.snapshot()['pose'], travelled=0., reverse=0.,
+                         waited=0., episodes=0)
+            index = 0
+            while index < len(route):
                 self.task['segment'] = index
-                running = asyncio.create_task(self.adapter.execute_segment(segment))
-                try:
-                    while not running.done():
-                        self.require_owner(self.owner)
-                        snapshot = self.adapter.snapshot()
-                        if self.clock()-self.task['started_at'] > 600:
-                            raise Refused('任务超过600秒')
-                        if not snapshot.get('healthy'):
-                            raise Refused(snapshot.get('fault', '定位、感知或CAN反馈失效'))
-                        if snapshot['generation'] != plan['generation'] or snapshot['map_revision'] != plan['map_revision']:
-                            raise Refused('定位代次或地图变化')
-                        pose = snapshot['pose']
-                        step = math.dist(previous[:2], pose[:2])
-                        if step > .5:
-                            raise Refused('定位跳变')
-                        travelled += step
-                        if snapshot.get('actual_v', 0.) < -.01:
-                            reverse += step
-                        elif snapshot.get('actual_v', 0.) > .01:
-                            reverse = 0.
-                        if reverse > 1. or travelled > 42.:
-                            raise Refused('实际倒车或行程超限')
-                        if distance_to_path(segment['poses'], pose[:2]) > .2:
-                            raise Refused('偏离预览路线超过20厘米')
-                        previous = pose
-                        self.adapter.permit(True)
-                        await asyncio.sleep(.05)
-                    await running
+                if await self.drive(plan, route[index], track):
                     await self.adapter.wait_stationary(require_api_zero=False)
-                finally:
-                    if not running.done():
-                        running.cancel()
-                        await asyncio.gather(running, return_exceptions=True)
-            if math.dist(self.adapter.snapshot()['pose'][:2], plan['goal']) > .25:
+                    index += 1
+                else:
+                    route, index = await self.clear_or_detour(plan, route, index, track)
+                    self.task.update(route=route, segment=index, substate='DRIVING', waiting_s=0.)
+            final = self.adapter.snapshot()['pose']
+            if math.dist(final[:2], plan['goal'][:2]) > .25:
                 raise Refused('未进入目标25厘米范围')
+            if len(plan['goal']) == 3 and abs(angle(final[2]-plan['goal'][2])) > math.radians(10):
+                raise Refused('到达朝向偏差超过10°')
         except asyncio.CancelledError:
             outcome = 'BLOCKED' if self.abort_reason else 'CANCELED'
             reason = self.abort_reason or self.reason or '人工停止'
@@ -224,6 +243,149 @@ class Console:
                 except OSError as exc:
                     self.task.update(state='FAULT',reason='停车已确认，但写入运行证据失败：'+str(exc))
                     self.phase,self.reason='FAULT',self.task['reason']
+
+    def option(self, key):
+        return float(self.config.get(key, OBSTACLE_DEFAULTS[key]))
+
+    def guard(self, plan, track):
+        """Every monitor that holds while driving, waiting or replanning."""
+        self.require_owner(self.owner)
+        snapshot = self.adapter.snapshot()
+        if self.clock()-self.task['started_at'] > 600:
+            raise Refused('任务超过600秒')
+        if not snapshot.get('healthy'):
+            raise Refused(snapshot.get('fault') or '定位、感知或CAN反馈失效')
+        if snapshot['generation'] != plan['generation'] or snapshot['map_revision'] != plan['map_revision']:
+            raise Refused('定位代次或地图变化')
+        pose = snapshot['pose']
+        step = math.dist(track['previous'][:2], pose[:2])
+        if step > .5:
+            raise Refused('定位跳变')
+        track['travelled'] += step
+        if snapshot.get('actual_v', 0.) < -.01:
+            track['reverse'] += step
+        elif snapshot.get('actual_v', 0.) > .01:
+            track['reverse'] = 0.
+        if track['reverse'] > 1. or track['travelled'] > 42.:
+            raise Refused('实际倒车或行程超限')
+        track['previous'] = pose
+        return snapshot
+
+    async def hold(self, plan, track, work):
+        """Keep the stationary lease and every monitor alive while `work` runs.
+
+        cmd_vel_can_bridge latches a lapsed permit until restart, so a wait or
+        a replan must keep renewing it; zero speed comes from the idle gate.
+        """
+        job = asyncio.ensure_future(work)
+        try:
+            while not job.done():
+                self.guard(plan, track)
+                self.adapter.permit(True)
+                await asyncio.wait({job}, timeout=.05)
+            return job.result()
+        finally:
+            if not job.done():
+                job.cancel()
+                await asyncio.gather(job, return_exceptions=True)
+
+    async def drive(self, plan, segment, track):
+        """Run one segment. False means a live obstacle stopped it."""
+        running = asyncio.create_task(self.adapter.execute_segment(segment))
+        try:
+            while not running.done():
+                snapshot = self.guard(plan, track)
+                if snapshot.get('obstacle_blocked'):
+                    self.task['obstacle_reason'] = snapshot.get('gate_reason') or '障碍进入预测通行范围'
+                    return False
+                if distance_to_path(segment['poses'], snapshot['pose'][:2]) > .2:
+                    raise Refused('偏离预览路线超过20厘米')
+                self.adapter.permit(True)
+                await asyncio.sleep(.05)
+            try:
+                await running
+            except (ValueError, TimeoutError, asyncio.TimeoutError) as exc:
+                # Nav2 aborts when a live obstacle leaves it no valid command.
+                pose = self.adapter.snapshot()['pose']
+                if pose is not None and not await self.adapter.route_clear(
+                        remaining_poses([segment], 0, pose), self.option('obstacle_clearance_m')):
+                    self.task['obstacle_reason'] = str(exc)
+                    return False
+                raise
+            return True
+        finally:
+            if not running.done():
+                running.cancel()
+                await asyncio.gather(running, return_exceptions=True)
+
+    async def clear_or_detour(self, plan, route, index, track):
+        """Wait for the route to clear; after the wait budget, plan a detour."""
+        track['episodes'] += 1
+        if track['episodes'] > 20:
+            raise Refused('障碍反复阻挡，任务停止')
+        self.task.update(substate='WAITING_OBSTACLE', waiting_s=0.)
+        await self.adapter.wait_stationary(require_api_zero=False)
+        clearance = self.option('obstacle_clearance_m')
+        started, clear_since = self.clock(), None
+        while True:
+            snapshot = self.guard(plan, track)
+            pose, now = snapshot['pose'], self.clock()
+            waited = now-started
+            self.task['waiting_s'] = round(waited, 1)
+            if track['waited']+waited > self.option('obstacle_total_wait_s'):
+                raise Refused('障碍超过%g秒未清除' % self.option('obstacle_total_wait_s'))
+            if await self.hold(plan, track, self.adapter.route_clear(
+                    remaining_poses(route, index, pose), clearance)):
+                clear_since = now if clear_since is None else clear_since
+                if now-clear_since >= 1.:
+                    track['waited'] += waited
+                    return resume_route(route, index, pose)
+            else:
+                clear_since = None
+                if waited >= self.option('obstacle_wait_s'):
+                    if self.task['replans'] >= self.option('max_replans'):
+                        raise Refused('绕行次数已用完，障碍仍未清除')
+                    self.task['substate'] = 'REPLANNING'
+                    try:
+                        detour = await self.hold(plan, track, self.detour(plan, pose, track))
+                    except (ValueError, TimeoutError, asyncio.TimeoutError) as exc:
+                        if isinstance(exc, Refused) and not str(exc).startswith('绕行'):
+                            raise
+                        # Failed attempt: wait a full interval before trying again.
+                        self.task.update(replan_error=str(exc), substate='WAITING_OBSTACLE')
+                        track['waited'] += self.clock()-started
+                        started = self.clock()
+                    else:
+                        track['waited'] += self.clock()-started
+                        return detour, 0
+            self.adapter.permit(True)
+            await asyncio.sleep(.2)
+
+    async def detour(self, plan, pose, track):
+        poses = await asyncio.wait_for(self.adapter.plan(plan['goal'], start=pose), 12.)
+        try:
+            segments = split_path(poses)
+            caps = self.config.get('accepted_capabilities', {})
+            for segment in segments:
+                if not caps.get(segment['kind'], False):
+                    raise ValueError('绕行路线需要尚未验收的运动：'+segment['kind'])
+            await self.adapter.validate(segments)
+            if not await self.adapter.route_clear(poses, self.option('obstacle_clearance_m')):
+                raise ValueError('绕行路线仍贴近障碍')
+            if track['travelled']+length(poses) > 42.:
+                raise ValueError('绕行后总行程将超过42米')
+        except ValueError as exc:
+            raise Refused('绕行失败：'+str(exc)) from exc
+        self.task['replans'] += 1
+        self.task['replan_error'] = ''
+        if hasattr(self.adapter, 'audit_event'):
+            try:
+                self.adapter.audit_event(dict(kind='replan', task=self.task['id'],
+                                              replans=self.task['replans'], start=pose,
+                                              segments=segments, reason=self.task['obstacle_reason']))
+            except OSError as exc:
+                raise Refused('无法记录绕行证据：'+str(exc)) from exc
+        return segments
 
     def request_stop(self, reason, blocked=False):
         self.adapter.permit(False)

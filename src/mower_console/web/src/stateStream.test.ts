@@ -1,5 +1,5 @@
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
-import {startStateStream} from './stateStream';
+import {decodePoints,startStateStream} from './stateStream';
 
 class Socket {
   static OPEN=1;
@@ -8,10 +8,12 @@ class Socket {
   sent:string[]=[];
   onopen:(()=>void)|null=null;
   onclose:(()=>void)|null=null;
-  onmessage:((event:{data:string})=>void)|null=null;
+  onmessage:((event:{data:string|ArrayBuffer})=>void)|null=null;
+  binaryType='blob';
   constructor(readonly url:string){Socket.instances.push(this)}
   open(){this.readyState=1;this.onopen?.()}
   receive(data:unknown){this.onmessage?.({data:JSON.stringify(data)})}
+  receiveBinary(data:ArrayBuffer){this.onmessage?.({data})}
   send(data:string){this.sent.push(data)}
   close(){if(this.readyState===3)return;this.readyState=3;this.onclose?.()}
 }
@@ -19,7 +21,7 @@ class Socket {
 const cleanup:Array<()=>void>=[];
 function start(readState=vi.fn(async()=>({localized:true}))) {
   const options={url:'ws://console/api/events',readState,onState:vi.fn(),onConnected:vi.fn(),
-    onOwnership:vi.fn(),onSocket:vi.fn(),onAuthRequired:vi.fn(),onError:vi.fn()};
+    onOwnership:vi.fn(),onSocket:vi.fn(),onAuthRequired:vi.fn(),onError:vi.fn(),onPoints:vi.fn()};
   const stop=startStateStream(options);cleanup.push(stop);
   return {options,stop,socket:Socket.instances.at(-1)!};
 }
@@ -90,5 +92,32 @@ describe('state connection after refresh',()=>{
     expect(first.socket.readyState).toBe(3);
     expect(Socket.instances).toHaveLength(2);
     expect(next.options.onState).toHaveBeenCalledWith({localized:true});
+  });
+});
+
+function frame(kind:number,values:number[],count=values.length/3){
+  const buffer=new ArrayBuffer(8+values.length*4),view=new DataView(buffer);
+  view.setUint8(0,kind);view.setUint32(4,count,true);
+  values.forEach((v,i)=>view.setFloat32(8+i*4,v,true));
+  return buffer;
+}
+
+describe('binary point frames',()=>{
+  it('decodes clouds and rejects malformed frames',()=>{
+    const decoded=decodePoints(frame(1,[1,2,3,4,5,6]));
+    expect(decoded?.kind).toBe('cloud');expect(Array.from(decoded!.xyz)).toEqual([1,2,3,4,5,6]);
+    expect(decodePoints(frame(2,[]))?.kind).toBe('obstacles');
+    expect(decodePoints(frame(3,[1,2,3]))).toBeNull();
+    expect(decodePoints(frame(1,[1,2,3],2))).toBeNull();
+    expect(decodePoints(new ArrayBuffer(4))).toBeNull();
+  });
+
+  it('delivers points without counting them as live state',async()=>{
+    const {socket,options}=start();socket.open();await Promise.resolve();
+    expect(socket.binaryType).toBe('arraybuffer');
+    for(let i=0;i<5;i++){socket.receiveBinary(frame(2,[1,1,0]));await vi.advanceTimersByTimeAsync(250);}
+    expect(options.onPoints).toHaveBeenCalledWith('obstacles',expect.any(Float32Array));
+    expect(options.onConnected).not.toHaveBeenCalledWith(true);
+    expect(socket.readyState).toBe(3);
   });
 });

@@ -20,7 +20,7 @@ import numpy as np
 
 from .assets import downsample
 from .can_feedback import TIMESTAMPNS, arrival_time, stationary_evidence
-from .geometry import Grid, angle, split_path
+from .geometry import Grid, angle, clear_of_points, split_path
 from .visibility import rear_observed
 
 
@@ -56,7 +56,9 @@ class RosAdapter:
         self.generation = 0
         self.localization, self.loc_ok = 'awaiting_initial_alignment', False
         self.gate_reason = ''
-        self.trajectory, self.obstacles, self.cloud = deque(maxlen=3000), [], []
+        self.trajectory = deque(maxlen=3000)
+        self.obstacles = self.cloud = np.empty((0, 3), dtype=np.float32)
+        self.obstacle_seq = self.cloud_seq = 0
         self.rear_clear, self.last_raw = False, 0.
         self.last_raw_stamp = -1.
         self.motion_process, self.action_handle = None, None
@@ -221,11 +223,12 @@ class RosAdapter:
 
     def xyz_in_map(self, msg, maximum):
         age = self.node.get_clock().now().nanoseconds/1e9-msg.header.stamp.sec-msg.header.stamp.nanosec/1e9
+        empty = np.empty((0, 3), dtype=np.float32)
         if not -.05 <= age <= .6 or msg.is_bigendian:
-            return []
+            return empty
         names = {f.name: f.offset for f in msg.fields if f.datatype == 7}
         if not all(n in names for n in ('x', 'y', 'z')):
-            return []
+            return empty
         dtype = np.dtype({'names': ['x', 'y', 'z'], 'formats': ['<f4']*3,
                           'offsets': [names[n] for n in ('x', 'y', 'z')], 'itemsize': msg.point_step})
         rows = [np.frombuffer(msg.data, dtype=dtype, count=msg.width, offset=i*msg.row_step) for i in range(msg.height)]
@@ -237,13 +240,14 @@ class RosAdapter:
         rotation = np.array([[1-2*(y*y+z*z),2*(x*y-z*w),2*(x*z+y*w)],
                              [2*(x*y+z*w),1-2*(x*x+z*z),2*(y*z-x*w)],
                              [2*(x*z-y*w),2*(y*z+x*w),1-2*(x*x+y*y)]])
-        return (points@rotation.T+np.array([t.translation.x,t.translation.y,t.translation.z])).tolist()
+        return (points@rotation.T+np.array([t.translation.x,t.translation.y,t.translation.z])).astype(np.float32)
 
     def on_obstacles(self, msg):
         try:
             points = self.xyz_in_map(msg, 2000)
             with self.lock:
                 self.obstacles = points
+                self.obstacle_seq += 1
             age = self.node.get_clock().now().nanoseconds/1e9-msg.header.stamp.sec-msg.header.stamp.nanosec/1e9
             if -.05 <= age <= .3:
                 self.mark('obstacles')
@@ -259,6 +263,7 @@ class RosAdapter:
             points = self.xyz_in_map(msg, 5000)
             with self.lock:
                 self.cloud = points
+                self.cloud_seq += 1
         except Exception:
             pass
 
@@ -299,7 +304,10 @@ class RosAdapter:
             if not self.assets.unchanged() or any(not p.exists() or
                     (p.stat().st_size,p.stat().st_mtime_ns)!=v for p,v in self.profile_fingerprints.items()):
                 faults.append('地图或运行配置已改变，请重启观测并重新预览')
-            if self.motion_process is not None and self.gate_reason.startswith(('predicted', 'rear', 'non-finite')):
+            # A predicted collision is a live obstacle: the task waits or detours.
+            # Rear-visibility and non-finite gate stops remain faults.
+            obstacle_blocked = self.motion_process is not None and self.gate_reason.startswith('predicted')
+            if self.motion_process is not None and self.gate_reason.startswith(('rear', 'non-finite')):
                 faults.append('安全门控：'+self.gate_reason)
             if self.motion_process is not None and now-self.times.get('gate',0) > .3:
                 faults.append('安全门控诊断过期')
@@ -320,7 +328,23 @@ class RosAdapter:
                         actual_v=sum(wheels)/4000. if wheels and wheel_fresh else 0.,
                         api_mode=self.api if status_fresh else None,feedback_fresh=wheel_fresh,
                         command_echo=self.echo if status_fresh else None,trajectory=list(self.trajectory),
-                        obstacles=self.obstacles,cloud=self.cloud,rear_observed=self.rear_clear)
+                        obstacle_blocked=obstacle_blocked,gate_reason=self.gate_reason,
+                        rear_observed=self.rear_clear)
+
+    def points(self):
+        """Display clouds in map frame as float32 xyz, with change counters."""
+        with self.lock:
+            return dict(cloud=(self.cloud_seq,self.cloud),obstacles=(self.obstacle_seq,self.obstacles))
+
+    async def route_clear(self, poses, radius):
+        with self.lock:
+            obstacles = self.obstacles
+        return await asyncio.to_thread(clear_of_points, poses, obstacles, radius)
+
+    def audit_event(self, event):
+        with self.lock:
+            if self.audit_file:
+                self.audit_file.write(json.dumps(event)+'\n')
 
     async def future(self, future, timeout=3.):
         until = time.monotonic()+timeout
@@ -365,17 +389,26 @@ class RosAdapter:
         msg.pose.orientation.z, msg.pose.orientation.w = math.sin(pose[2]/2), math.cos(pose[2]/2)
         return msg
 
-    async def plan(self, xy):
+    async def plan(self, goal, start=None):
+        """Plan to [x,y] or [x,y,yaw]; a requested yaw ends in an exact turn."""
         from nav2_msgs.action import ComputePathToPose
+        xy, final_yaw = list(goal[:2]), (goal[2] if len(goal) > 2 else None)
         await asyncio.to_thread(self.assets.grid.validate,
                                 [{'poses':[[*xy,0.],[*xy,0.]],'kind':'forward'}])
-        start = self.snapshot()['pose']
-        bearing = math.atan2(xy[1]-start[1],xy[0]-start[0])
+        if start is None:
+            start = self.snapshot()['pose']
+        if start is None:
+            raise ValueError('定位未就绪，无法规划')
+        preferred = math.atan2(xy[1]-start[1],xy[0]-start[0]) if final_yaw is None else final_yaw
         headings = [math.atan2(y,x)%(2*math.pi) for x,y in ((2,0),(2,1),(1,1),(1,2),(0,2),(-1,2),(-1,1),(-2,1),(-2,0),(-2,-1),(-1,-1),(-1,-2),(0,-2),(1,-2),(1,-1),(2,-1))]
-        headings.sort(key=lambda h: abs(angle(h-bearing)))
+        headings.sort(key=lambda h: abs(angle(h-preferred)))
         deadline = time.monotonic()+10.
         last = '未找到满足约束的路线'
-        for planner in ('ForwardGrid','ReverseGrid'):
+        # This phase drives forward and turns in place only; ReverseGrid is
+        # opt-in through the board-local config.
+        for planner in getattr(self, 'config', {}).get('planners', ['ForwardGrid']):
+            if planner not in ('ForwardGrid', 'ReverseGrid'):
+                raise ValueError('未知规划器：'+str(planner))
             for yaw in headings:
                 if time.monotonic() > deadline:
                     raise ValueError('规划超过10秒，请调整目标')
@@ -385,6 +418,8 @@ class RosAdapter:
                 try:
                     result = await self.action(self.compute if planner=='ForwardGrid' else self.reverse_compute,goal,.7)
                     poses = [[p.pose.position.x,p.pose.position.y,self.yaw(p.pose.orientation)] for p in result.path.poses]
+                    if final_yaw is not None and poses and abs(angle(poses[-1][2]-final_yaw)) > 1e-3:
+                        poses.append([poses[-1][0],poses[-1][1],final_yaw])
                     segments = split_path(poses)
                     await asyncio.to_thread(self.assets.grid.validate, segments)
                     return poses

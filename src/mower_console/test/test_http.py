@@ -117,3 +117,31 @@ async def test_slow_observer_does_not_block_another_page(tmp_path,monkeypatch):
         refreshed=await client.ws_connect('/api/events')
         assert (await receive_type(refreshed,'state'))['state']['localized']
         await refreshed.close();await old.close()
+
+
+@pytest.mark.asyncio
+async def test_point_clouds_stream_as_binary_frames_only_when_changed(tmp_path):
+    import struct
+    import numpy as np
+    from aiohttp import WSMsgType
+    c,a,_=make_console()
+    clouds={'cloud':(1,np.array([[1,2,3],[4,5,6]],dtype=np.float32)),
+            'obstacles':(7,np.empty((0,3),dtype=np.float32))}
+    a.points=lambda:clouds
+    assets=type('Assets',(),{'description':{'revision':'test'}})()
+    async with TestClient(TestServer(create_app(c,assets,'123456',tmp_path)),cookie_jar=CookieJar(unsafe=True)) as client:
+        assert (await client.post('/api/pair',json={'code':'123456'})).status==200
+        ws=await client.ws_connect('/api/events')
+        frames,states=[],0
+        while states<4:
+            msg=await asyncio.wait_for(ws.receive(),1)
+            if msg.type==WSMsgType.BINARY:
+                frames.append(msg.data)
+            else:
+                assert 'cloud' not in msg.json().get('state',{})
+                states+=1
+        kinds=[struct.unpack_from('<B3xI',f) for f in frames]
+        assert sorted(kinds)==[(1,2),(2,0)]
+        cloud=next(f for f in frames if f[0]==1)
+        assert np.frombuffer(cloud,dtype='<f4',offset=8).tolist()==[1,2,3,4,5,6]
+        await ws.close()
