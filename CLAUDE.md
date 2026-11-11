@@ -19,17 +19,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ssh rk3588 'bash -lc "
   cd ~/MobileEss_ws &&
   source /opt/ros/humble/setup.bash &&
-  colcon build --symlink-install
+  colcon build --symlink-install \
+    --cmake-args -DROS_EDITION=ROS2 -DDISTRO_ROS=humble
 "'
 
 # Rebuild one changed package; source install/setup.bash before ros2 commands
 ssh rk3588 'bash -lc "
   cd ~/MobileEss_ws &&
   source /opt/ros/humble/setup.bash &&
-  colcon build --packages-select <package> --symlink-install &&
+  colcon build --packages-select <package> --symlink-install \
+    --cmake-args -DROS_EDITION=ROS2 -DDISTRO_ROS=humble &&
   source install/setup.bash
 "'
 ```
+
+`livox_ros_driver2` needs `-DROS_EDITION=ROS2 -DDISTRO_ROS=humble` on every fresh configure. Without `DISTRO_ROS=humble` its CMake falls back to a pre-Humble branch and fails with `LIVOX_INTERFACES_INCLUDE_DIRECTORIES ... NOTFOUND`. An existing `build/` keeps the flags in `CMakeCache.txt`, so this only shows up in a new workspace or after deleting `build/livox_ros_driver2`. The other packages ignore these flags.
 
 Valid package names include `fast_lio`, `livox_ros_driver2`, `mcu_can_bridge`, `mobileess_rtk`, `mower_console`, `mower_nav2`, and `timed_dynamic_obstacle_layer`. `mower_console` installs its prebuilt `web/dist`, so rebuild the frontend before `colcon build` when the UI changed.
 
@@ -117,7 +121,7 @@ Nav2 controller -> /cmd_vel_nav -> velocity_smoother -> /cmd_vel
 - `mobileess_rtk` bridges UM982 NMEA/NTRIP to `/rtk/fix`, `/rtk/heading`, and diagnostics. Use a board-local RTK parameter file for serial and NTRIP values; do not commit `*.local.yaml` credentials.
 - `mower_nav2` assembles fixed-map localization, Nav2, Livox obstacle adaptation, `TimedDynamicObstacleLayer`, and the final collision gate. Its global costmap is the reviewed static planning map; dynamic Mid-360 evidence belongs only in the local costmap.
 - `timed_dynamic_obstacle_layer` is the C++ Nav2 plugin that stores short-lived local obstacle cells.
-- `mower_console` is the browser console served from the RK3588 (`aiohttp` server in `server.py`, ROS bridge in `ros_adapter.py`, React frontend in `web/`). `console.launch.py` checks the fixed-map assets (`map.yaml/.pgm/.pcd`, `livox.json`, `mid360_real.yaml`) and starts two Smac lattice planner processes (forward and reverse, which cannot share one process because Humble caches the lattice table per file). One console task owns motion at a time, and each start permit is single-use. The systemd service always launches with `observation_only:=true`. Motion needs a separate board-local config with `motion_enabled`/`accepted_capabilities` plus an explicit `observation_only:=false`. Run records go to `~/MobileEss_data/console-runs/` on the board. Console field reports live in `docs/console/`.
+- `mower_console` is the browser console served from the RK3588 (`aiohttp` server in `server.py`, ROS bridge in `ros_adapter.py`, React frontend in `web/`). `console.launch.py` checks the fixed-map assets (`map.yaml/.pgm/.pcd`, `livox.json`, `mid360_real.yaml`) and starts two Smac lattice planner processes (forward and reverse, which cannot share one process because Humble caches the lattice table per file). One console task owns motion at a time, and each start permit is single-use. The systemd service always launches with `observation_only:=true`. Motion needs a separate board-local config with `motion_enabled`/`accepted_capabilities` plus an explicit `observation_only:=false`. Run records go to `~/MobileEss_data/console-runs/` on the board.
 
 ## Runtime and safety contracts
 
