@@ -1,6 +1,7 @@
 import asyncio
 import copy
 import math
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -20,14 +21,29 @@ class Adapter:
         self.block=False
         self.change_on_validate=None
         self.stop_fails=False
+        self.clear=True
+        self.plans=[]
+        self.next_plan=None
+        self.executed=[]
+        self.events=[]
 
     def snapshot(self): return copy.deepcopy(self.data)
-    async def plan(self,goal): return [[0.,0.,0.],[float(goal[0]),float(goal[1]),0.]]
+    async def plan(self,goal,start=None):
+        self.plans.append((list(goal),start))
+        if self.next_plan is not None and len(self.plans)>1:
+            return copy.deepcopy(self.next_plan)
+        poses=[[0.,0.,0.],[float(goal[0]),float(goal[1]),0.]]
+        if len(goal)==3: poses.append([float(goal[0]),float(goal[1]),float(goal[2])])
+        return poses
+    async def route_clear(self,poses,radius):
+        return self.clear(poses) if callable(self.clear) else self.clear
+    def audit_event(self,event): self.events.append(event)
     async def validate(self,segments):
         if self.change_on_validate: self.change_on_validate()
     async def arm(self): self.armed+=1
     def permit(self,value): self.permits.append(value)
     async def execute_segment(self,segment):
+        self.executed.append(segment)
         if self.block: await asyncio.Event().wait()
         self.data['pose']=segment['poses'][-1]
     async def wait_stationary(self,require_api_zero=True): pass
@@ -209,3 +225,175 @@ def test_rear_missing_or_self_occluded_returns_do_not_clear():
     assert rear_observed(points)
     points.append(SimpleNamespace(x=-.5,y=-.01,z=.2))
     assert not rear_observed(points)
+
+
+async def wait_until(condition,timeout=2.):
+    async def poll():
+        while not condition(): await asyncio.sleep(.01)
+    await asyncio.wait_for(poll(),timeout)
+
+
+async def start_blocked(goal=(1.,0.)):
+    c,a,now=make_console();a.block=True
+    p=await c.preview('tab1',list(goal));await c.start('tab1',p['id'],CONFIRM)
+    await wait_until(lambda:a.executed)
+    a.clear=False
+    a.data.update(obstacle_blocked=True,gate_reason='predicted footprint cost 254 >= 253')
+    await wait_until(lambda:c.task.get('substate')=='WAITING_OBSTACLE')
+    a.data['obstacle_blocked']=False
+    return c,a,now
+
+
+def advance(c,now,seconds):
+    now[0]+=seconds;c.beat('tab1')
+
+
+@pytest.mark.asyncio
+async def test_obstacle_waits_then_continues_on_the_reviewed_route():
+    c,a,now=await start_blocked()
+    assert c.state()['phase']=='RUNNING' and c.task['obstacle_reason'].startswith('predicted')
+    a.block=False;a.clear=True
+    await asyncio.sleep(.3);advance(c,now,1.1)
+    await asyncio.wait_for(c.job,2.)
+    assert c.task['state']=='SUCCEEDED' and c.task['replans']==0 and len(a.plans)==1
+    assert len(a.executed)==2 and a.executed[1]['poses'][-1]==[1.,0.,0.]
+    # The motion lease is renewed through the wait and revoked once at the end.
+    assert a.permits.count(False)==1 and a.permits[-1] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('delay,interrupt', [(.01, None), (.4, None), (.4, 'stop'),
+                                           (.4, 'disconnect'), (.01, 'fault'), (.01, 'cancel_error')])
+async def test_obstacle_cancellation_requires_prompt_confirmation(delay, interrupt):
+    c, a, now = make_console()
+    lease = MotionPermit(.25)
+    entered, cancelling = asyncio.Event(), asyncio.Event()
+
+    def permit(enabled):
+        a.permits.append(enabled)
+        lease.update(enabled, time.monotonic())
+
+    async def slow_cancel(segment):
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelling.set()
+            await asyncio.sleep(delay)
+            if interrupt == 'cancel_error':
+                raise TimeoutError('ROS cancellation acknowledgement timed out')
+
+    a.permit, a.execute_segment, a.clear = permit, slow_cancel, False
+    plan = await c.preview('tab1', [1., 0.])
+    await c.start('tab1', plan['id'], CONFIRM)
+    await entered.wait()
+    a.data.update(obstacle_blocked=True, gate_reason='predicted footprint cost 254 >= 253')
+    await asyncio.wait_for(cancelling.wait(), 1.)
+    try:
+        if interrupt is None and delay < .15:
+            await wait_until(lambda: c.task.get('substate') == 'WAITING_OBSTACLE')
+            assert lease.valid(time.monotonic()), 'obstacle cancellation expired the task lease'
+            assert False not in a.permits
+        else:
+            if interrupt == 'stop':
+                c.request_stop('人工停止')
+            elif interrupt == 'disconnect':
+                now[0] += 1.01
+            elif interrupt == 'fault':
+                a.data.update(healthy=False, fault='定位未就绪')
+            elif interrupt is None:
+                await wait_until(lambda: False in a.permits, timeout=.25)
+                assert not c.job.done(), 'slow cancellation cleanup must still be awaited'
+            await asyncio.wait_for(c.job, 1.)
+            assert c.task['state'] == ('CANCELED' if interrupt == 'stop' else 'BLOCKED')
+            assert c.task['stop_confirmed']
+            assert not any(a.permits[a.permits.index(False):])
+            if interrupt is None:
+                assert '取消分段超时' in c.task['reason']
+            elif interrupt == 'cancel_error':
+                assert 'acknowledgement timed out' in c.task['reason']
+    finally:
+        await c.stop()
+
+
+@pytest.mark.asyncio
+async def test_persistent_obstacle_gets_a_validated_detour_and_evidence():
+    c,a,now=await start_blocked()
+    a.next_plan=[[0.,0.,0.],[.5,0.,0.],[1.,0.,0.]]
+    a.clear=lambda poses:len(a.plans)>1
+    a.block=False;advance(c,now,10.1)
+    await asyncio.wait_for(c.job,2.)
+    assert c.task['state']=='SUCCEEDED' and c.task['replans']==1
+    assert a.plans[1][1]==[0.,0.,0.] and a.plans[1][0]==[1.,0.]
+    assert c.task['route'][0]['poses'][1]==[.5,0.,0.]
+    assert a.events and a.events[0]['kind']=='replan'
+
+
+@pytest.mark.asyncio
+async def test_no_detour_budget_blocks_and_stops():
+    c,a,now=await start_blocked();c.config['max_replans']=0
+    advance(c,now,10.1)
+    await asyncio.wait_for(c.job,2.)
+    assert c.task['state']=='BLOCKED' and '绕行次数' in c.task['reason'] and c.task['stop_confirmed']
+
+
+@pytest.mark.asyncio
+async def test_detour_needing_unaccepted_reverse_is_refused_until_total_wait_ends():
+    c,a,now=await start_blocked()
+    c.config['accepted_capabilities']['reverse']=False
+    a.next_plan=[[0.,0.,0.],[-.5,0.,0.]]
+    advance(c,now,10.1)
+    await wait_until(lambda:c.task['replan_error'])
+    assert '倒车' in c.task['replan_error'] or 'reverse' in c.task['replan_error']
+    assert c.task['replans']==0 and c.task['state']=='RUNNING'
+    advance(c,now,51.)
+    await asyncio.wait_for(c.job,2.)
+    assert c.task['state']=='BLOCKED' and '未清除' in c.task['reason']
+
+
+@pytest.mark.asyncio
+async def test_lost_controller_still_stops_during_an_obstacle_wait():
+    c,a,now=await start_blocked()
+    now[0]+=1.01
+    await asyncio.wait_for(c.job,2.)
+    assert c.task['state']=='BLOCKED' and c.task['stop_confirmed'] and a.permits[-1] is False
+
+
+@pytest.mark.asyncio
+async def test_localization_fault_during_wait_is_not_treated_as_an_obstacle():
+    c,a,_=await start_blocked()
+    a.data.update(healthy=False,fault='定位未就绪')
+    await asyncio.wait_for(c.job,2.)
+    assert c.task['state']=='BLOCKED' and c.task['reason']=='定位未就绪'
+
+
+@pytest.mark.asyncio
+async def test_goal_heading_is_planned_and_checked_on_arrival():
+    c,a,_=make_console()
+    p=await c.preview('tab1',[.4,0.,math.pi/2])
+    assert [s['kind'] for s in p['segments']]==['forward','rotate'] and p['goal'][2]==pytest.approx(math.pi/2)
+    await c.start('tab1',p['id'],CONFIRM);await c.job
+    assert c.task['state']=='SUCCEEDED'
+    for bad in ([1.,0.,0.,0.],[1.,True],[1.,float('nan')]):
+        with pytest.raises(Refused):await c.preview('tab1',bad)
+
+
+def test_live_points_inside_the_gate_envelope_block_the_route():
+    from mower_console.geometry import clear_of_points
+    route=[[0.,0.,0.],[3.,0.,0.]]
+    assert clear_of_points(route,[],1.1)
+    assert clear_of_points(route,[[1.5,1.2,.3],[4.2,0.,.3]],1.1)
+    assert not clear_of_points(route,[[1.5,1.,.3]],1.1)
+    assert not clear_of_points(route,[[3.5,.3,.3]],1.1)
+
+
+def test_resume_trims_interrupted_segments():
+    from mower_console.domain import remaining_poses,resume_route
+    route=split_path([[0.,0.,0.],[1.,0.,0.],[2.,0.,0.],[2.,0.,math.pi/2]])
+    assert [s['kind'] for s in route]==['forward','rotate']
+    trimmed,index=resume_route(route,0,[1.02,0.,0.])
+    assert index==0 and trimmed[0]['poses'][0]==[1.,0.,0.] and trimmed[0]['length_m']==pytest.approx(1.)
+    assert remaining_poses(route,0,[1.02,0.,0.])[0]==[1.02,0.,0.]
+    trimmed,index=resume_route(route,1,[2.,0.,math.pi/4])
+    assert index==1 and trimmed[1]['turn']==pytest.approx(math.pi/4)
+    assert resume_route(route,1,[2.,0.,math.pi/2])[1]==2

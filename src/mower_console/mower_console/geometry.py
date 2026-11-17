@@ -63,6 +63,43 @@ def split_path(poses):
     return segments
 
 
+def path_centers(poses, step=.05):
+    """Points along a pose polyline at most `step` apart, ends included."""
+    centers = [tuple(poses[0][:2])] if poses else []
+    for a, b in zip(poses, poses[1:]):
+        count = max(1, math.ceil(math.dist(a[:2], b[:2])/step))
+        for i in range(1, count+1):
+            center = (a[0]+(b[0]-a[0])*i/count, a[1]+(b[1]-a[1])*i/count)
+            if center != centers[-1]:
+                centers.append(center)
+    return centers
+
+
+def clear_of_points(poses, points, radius):
+    """True when no live obstacle point lies within `radius` of the path.
+
+    The console uses the collision gate's own envelope here: the gate blocks a
+    footprint disk that touches an inscribed-cost cell, so resuming or taking a
+    detour inside that distance would only be stopped again.
+    """
+    obstacles = np.asarray(points, dtype=np.float64).reshape(-1, 3)[:, :2] if len(points) else np.empty((0, 2))
+    if not len(obstacles) or not poses:
+        return True
+    centers = np.asarray(path_centers(poses), dtype=np.float64)
+    lo, hi = centers.min(axis=0)-radius, centers.max(axis=0)+radius
+    near = obstacles[((obstacles >= lo) & (obstacles <= hi)).all(axis=1)]
+    for start in range(0, len(centers), 256):
+        batch = centers[start:start+256]
+        if len(near) and (np.hypot(batch[:, None, 0]-near[None, :, 0],
+                                   batch[:, None, 1]-near[None, :, 1]) <= radius).any():
+            return False
+    return True
+
+
+def nearest_index(poses, xy):
+    return min(range(len(poses)), key=lambda i: math.dist(poses[i][:2], xy))
+
+
 def distance_to_path(poses, xy):
     result = math.inf
     for a, b in zip(poses, poses[1:]):

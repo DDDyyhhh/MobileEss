@@ -8,10 +8,12 @@ class Socket {
   sent:string[]=[];
   onopen:(()=>void)|null=null;
   onclose:(()=>void)|null=null;
-  onmessage:((event:{data:string})=>void)|null=null;
+  onmessage:((event:{data:string|ArrayBuffer})=>void)|null=null;
+  binaryType='blob';
   constructor(readonly url:string){Socket.instances.push(this)}
   open(){this.readyState=1;this.onopen?.()}
   receive(data:unknown){this.onmessage?.({data:JSON.stringify(data)})}
+  receiveBinary(data:ArrayBuffer){this.onmessage?.({data})}
   send(data:string){this.sent.push(data)}
   close(){if(this.readyState===3)return;this.readyState=3;this.onclose?.()}
 }

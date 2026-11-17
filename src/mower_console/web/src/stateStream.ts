@@ -1,4 +1,4 @@
-/** Keep display data and control ownership separate across refresh/reconnect. */
+/** Keep state and control ownership separate across refresh/reconnect. */
 type StateStreamOptions<T> = {
   url: string;
   readState: () => Promise<T>;
@@ -33,7 +33,7 @@ export function startStateStream<T>(options: StateStreamOptions<T>) {
 
   const connect=()=>{
     if(stopped)return;
-    const socket=new WebSocket(options.url);current=socket;
+    const socket=new WebSocket(options.url);current=socket;socket.binaryType='arraybuffer';
     let lastState:number|null=null;
     const opened=performance.now();
     revoke();options.onConnected(false);options.onSocket(socket);

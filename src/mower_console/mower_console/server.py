@@ -9,15 +9,26 @@ import logging
 import os
 from pathlib import Path
 import secrets
+import struct
 import time
 
 from aiohttp import web
+import numpy as np
 import yaml
 
 from .assets import MapAssets
 from .domain import Console, Refused
 
 logger = logging.getLogger(__name__)
+
+
+POINT_KINDS = {'cloud': 1, 'obstacles': 2}
+
+
+def encode_points(kind, xyz):
+    """Binary frame: u8 kind, 3 pad bytes, u32 count, then float32 xyz."""
+    data = np.ascontiguousarray(np.asarray(xyz, dtype='<f4').reshape(-1, 3))
+    return struct.pack('<B3xI', POINT_KINDS[kind], len(data))+data.tobytes()
 
 
 def create_app(console, assets, pairing_code, static_dir):
@@ -138,16 +149,9 @@ def create_app(console, assets, pairing_code, static_dir):
     async def publish(peer):
         # One page owns one sender. A cancelled/slow old connection cannot
         # terminate or block the state stream of a refreshed page.
-        last_cloud = -1.
         try:
             while not peer.closed:
-                payload = {'type': 'state', 'state': console.state()}
-                now = time.monotonic()
-                if now-last_cloud < .5:
-                    payload['state'].pop('cloud', None)
-                else:
-                    last_cloud = now
-                await asyncio.wait_for(peer.send_json(payload), .5)
+                await asyncio.wait_for(peer.send_json({'type': 'state', 'state': console.state()}), .5)
                 await asyncio.sleep(.2)
         except (ConnectionError, asyncio.TimeoutError):
             logger.info('Closing an unresponsive console state connection')
@@ -162,6 +166,46 @@ def create_app(console, assets, pairing_code, static_dir):
                     await asyncio.wait_for(peer.close(), 1.)
                 except (Exception, asyncio.CancelledError):
                     pass
+
+    async def point_events(request):
+        origin = request.headers.get('Origin')
+        if origin and origin != f'{request.scheme}://{request.host}':
+            raise web.HTTPForbidden()
+        cloud = request.query.get('cloud', '0')
+        if cloud not in ('0', '1'):
+            raise web.HTTPBadRequest(text='cloud must be 0 or 1')
+        ws = web.WebSocketResponse(heartbeat=5, max_msg_size=64)
+        await ws.prepare(request)
+        sender = asyncio.create_task(publish_points(ws, cloud == '1'))
+        streams.add(sender)
+        sender.add_done_callback(streams.discard)
+        await sender
+        return ws
+
+    async def publish_points(peer, include_cloud):
+        # A separate, demand-driven display connection cannot queue point bytes
+        # ahead of state/ownership. Never enqueue the next batch until requested.
+        last_cloud, sent = -1., {}
+        try:
+            async for message in peer:
+                if message.type != web.WSMsgType.TEXT or message.data != 'next':
+                    await peer.close(code=1008, message=b'Expected next')
+                    return
+                points = console.adapter.points()
+                for kind in (('obstacles', 'cloud') if include_cloud else ('obstacles',)):
+                    seq, xyz = points[kind]
+                    now = time.monotonic()
+                    if sent.get(kind) == seq or (kind == 'cloud' and now-last_cloud < .5):
+                        continue
+                    await asyncio.wait_for(peer.send_bytes(encode_points(kind, xyz)), .5)
+                    sent[kind] = seq
+                    if kind == 'cloud':
+                        last_cloud = now
+                await asyncio.wait_for(peer.send_json({'type': 'ready'}), .5)
+        except (ConnectionError, asyncio.TimeoutError):
+            logger.info('Closing an unresponsive console point connection')
+        finally:
+            await peer.close()
 
     async def shutdown(app):
         await console.stop()
@@ -179,6 +223,7 @@ def create_app(console, assets, pairing_code, static_dir):
     app.router.add_get('/api/map', map_info)
     app.router.add_get('/api/map/points', points)
     app.router.add_get('/api/events', events)
+    app.router.add_get('/api/points', point_events)
     app.router.add_post('/api/plans', plans)
     app.router.add_post('/api/tasks', tasks)
     app.router.add_post('/api/tasks/{id}/stop', stop)

@@ -7,3 +7,13 @@ accepted_capabilities:
   forward: false
   reverse: false
   rotate: false
+# This phase plans forward driving and in-place turns only. Add ReverseGrid
+# here only after reverse has its own field acceptance.
+planners: [ForwardGrid]
+# Live-obstacle handling during a task: stop and wait, continue on the
+# reviewed route once it stays clear for 1 s, otherwise plan a detour.
+obstacle_wait_s: 10
+obstacle_total_wait_s: 60
+max_replans: 3
+# Collision-gate disk 0.70 m + local costmap inscribed radius 0.404 m.
+obstacle_clearance_m: 1.1

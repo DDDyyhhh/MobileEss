@@ -1,6 +1,8 @@
 """Explicit offline display adapter. It can NEVER arm or move a vehicle."""
 import math
 
+import numpy as np
+
 
 class DemoAdapter:
     def __init__(self, assets):
@@ -11,16 +13,25 @@ class DemoAdapter:
                     fault='离线演示，没有连接车辆', pose=[1.48, .67, 0.],
                     generation=0, map_revision=self.assets.revision, actual_v=0.,
                     wheel_mm_s=[0, 0, 0, 0], api_mode=None, localization='离线示例位姿',
-                    trajectory=[], obstacles=[], cloud=[], command_echo=None)
+                    trajectory=[], obstacle_blocked=False, gate_reason='', command_echo=None)
 
-    async def plan(self, goal):
-        start = self.snapshot()['pose']
+    def points(self):
+        empty = np.empty((0, 3), dtype=np.float32)
+        return dict(cloud=(0, empty), obstacles=(0, empty))
+
+    async def plan(self, goal, start=None):
+        start = start or self.snapshot()['pose']
         yaw = math.atan2(goal[1]-start[1], goal[0]-start[0])
         poses = [start, [start[0], start[1], yaw]]
-        n = max(1, math.ceil(math.dist(start[:2], goal)/.05))
+        n = max(1, math.ceil(math.dist(start[:2], goal[:2])/.05))
         poses += [[start[0]+(goal[0]-start[0])*i/n,
                    start[1]+(goal[1]-start[1])*i/n, yaw] for i in range(1, n+1)]
+        if len(goal) > 2:
+            poses.append([goal[0], goal[1], goal[2]])
         return poses
+
+    async def route_clear(self, poses, radius):
+        return True
 
     async def validate(self, segments):
         self.assets.grid.validate(segments)
