@@ -1,7 +1,7 @@
 export type Pose = [number, number, number];
 export type Kind = 'forward'|'reverse'|'rotate';
 export type Segment = {kind: Kind; poses: Pose[]; length_m: number; turn: number};
-export type Plan = {id: string; goal: number[]; start: Pose; segments: Segment[]; length_m: number; consumed: boolean};
+export type Plan = {id: string; goal: number[]; start: Pose; segments: Segment[]; length_m: number; consumed: boolean; generation?: number};
 export type MapData = {width: number; height: number; resolution: number; origin: Pose; data: number[]; revision: string};
 export type Task = {
   id: string; state: string; segment: number; stop_confirmed: boolean; reason?: string;
@@ -15,6 +15,7 @@ export type State = {
   plan: Plan|null; motion_enabled: boolean; capabilities?: Partial<Record<Kind, boolean>>;
   generation: number; trajectory: number[][]; task: Task|null;
   obstacle_blocked?: boolean; gate_reason?: string; feedback_fresh?: boolean;
+  boot_id?: string; map_revision?: string;
 };
 /** A goal position; yaw null lets the planner choose the arrival heading. */
 export type Goal = {x: number; y: number; yaw: number|null};

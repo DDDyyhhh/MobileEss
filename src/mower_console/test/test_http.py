@@ -131,15 +131,18 @@ async def test_point_clouds_stream_as_binary_frames_only_when_changed(tmp_path):
     assets=type('Assets',(),{'description':{'revision':'test'}})()
     async with TestClient(TestServer(create_app(c,assets,'123456',tmp_path)),cookie_jar=CookieJar(unsafe=True)) as client:
         assert (await client.post('/api/pair',json={'code':'123456'})).status==200
-        ws=await client.ws_connect('/api/events')
+        ws=await client.ws_connect('/api/points?cloud=1')
         frames,states=[],0
+        await ws.send_str('next')
         while states<4:
             msg=await asyncio.wait_for(ws.receive(),1)
             if msg.type==WSMsgType.BINARY:
                 frames.append(msg.data)
             else:
-                assert 'cloud' not in msg.json().get('state',{})
+                assert msg.json()=={'type':'ready'}
                 states+=1
+                if states<4:
+                    await ws.send_str('next')
         kinds=[struct.unpack_from('<B3xI',f) for f in frames]
         assert sorted(kinds)==[(1,2),(2,0)]
         cloud=next(f for f in frames if f[0]==1)

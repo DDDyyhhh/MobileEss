@@ -1,15 +1,4 @@
-/** Keep display data and control ownership separate across refresh/reconnect. */
-export type PointKind = 'cloud'|'obstacles';
-
-/** Binary frame from the board: u8 kind, 3 pad bytes, u32 count, float32 xyz. */
-export function decodePoints(buffer: ArrayBuffer): {kind: PointKind; xyz: Float32Array}|null {
-  if(buffer.byteLength<8)return null;
-  const view=new DataView(buffer),code=view.getUint8(0),count=view.getUint32(4,true);
-  const kind=code===1?'cloud':code===2?'obstacles':null;
-  if(!kind||buffer.byteLength!==8+count*12)return null;
-  return {kind,xyz:new Float32Array(buffer,8,count*3)};
-}
-
+/** Keep state and control ownership separate across refresh/reconnect. */
 type StateStreamOptions<T> = {
   url: string;
   readState: () => Promise<T>;
@@ -19,7 +8,6 @@ type StateStreamOptions<T> = {
   onSocket: (socket: WebSocket|null) => void;
   onAuthRequired: () => void;
   onError: (message: string) => void;
-  onPoints?: (kind: PointKind, xyz: Float32Array) => void;
 };
 
 export function startStateStream<T>(options: StateStreamOptions<T>) {
@@ -60,12 +48,6 @@ export function startStateStream<T>(options: StateStreamOptions<T>) {
     socket.onopen=()=>{if(!stopped&&current===socket)snapshot(socket,()=>lastState===null);};
     socket.onmessage=event=>{
       if(stopped||current!==socket)return;
-      // Point frames are display data only; they never keep the stream alive.
-      if(event.data instanceof ArrayBuffer){
-        const points=decodePoints(event.data);
-        if(points)options.onPoints?.(points.kind,points.xyz);
-        return;
-      }
       let message;
       try{message=JSON.parse(event.data);}catch{socket.close();return;}
       if(message.type==='state'&&message.state){
