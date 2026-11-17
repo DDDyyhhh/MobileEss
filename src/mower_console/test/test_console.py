@@ -1,6 +1,7 @@
 import asyncio
 import copy
 import math
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -258,6 +259,61 @@ async def test_obstacle_waits_then_continues_on_the_reviewed_route():
     assert len(a.executed)==2 and a.executed[1]['poses'][-1]==[1.,0.,0.]
     # The motion lease is renewed through the wait and revoked once at the end.
     assert a.permits.count(False)==1 and a.permits[-1] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('delay,interrupt', [(.01, None), (.4, None), (.4, 'stop'),
+                                           (.4, 'disconnect'), (.01, 'fault'), (.01, 'cancel_error')])
+async def test_obstacle_cancellation_requires_prompt_confirmation(delay, interrupt):
+    c, a, now = make_console()
+    lease = MotionPermit(.25)
+    entered, cancelling = asyncio.Event(), asyncio.Event()
+
+    def permit(enabled):
+        a.permits.append(enabled)
+        lease.update(enabled, time.monotonic())
+
+    async def slow_cancel(segment):
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelling.set()
+            await asyncio.sleep(delay)
+            if interrupt == 'cancel_error':
+                raise TimeoutError('ROS cancellation acknowledgement timed out')
+
+    a.permit, a.execute_segment, a.clear = permit, slow_cancel, False
+    plan = await c.preview('tab1', [1., 0.])
+    await c.start('tab1', plan['id'], CONFIRM)
+    await entered.wait()
+    a.data.update(obstacle_blocked=True, gate_reason='predicted footprint cost 254 >= 253')
+    await asyncio.wait_for(cancelling.wait(), 1.)
+    try:
+        if interrupt is None and delay < .15:
+            await wait_until(lambda: c.task.get('substate') == 'WAITING_OBSTACLE')
+            assert lease.valid(time.monotonic()), 'obstacle cancellation expired the task lease'
+            assert False not in a.permits
+        else:
+            if interrupt == 'stop':
+                c.request_stop('人工停止')
+            elif interrupt == 'disconnect':
+                now[0] += 1.01
+            elif interrupt == 'fault':
+                a.data.update(healthy=False, fault='定位未就绪')
+            elif interrupt is None:
+                await wait_until(lambda: False in a.permits, timeout=.25)
+                assert not c.job.done(), 'slow cancellation cleanup must still be awaited'
+            await asyncio.wait_for(c.job, 1.)
+            assert c.task['state'] == ('CANCELED' if interrupt == 'stop' else 'BLOCKED')
+            assert c.task['stop_confirmed']
+            assert not any(a.permits[a.permits.index(False):])
+            if interrupt is None:
+                assert '取消分段超时' in c.task['reason']
+            elif interrupt == 'cancel_error':
+                assert 'acknowledgement timed out' in c.task['reason']
+    finally:
+        await c.stop()
 
 
 @pytest.mark.asyncio

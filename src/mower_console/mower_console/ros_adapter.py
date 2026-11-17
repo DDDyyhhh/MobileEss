@@ -62,6 +62,7 @@ class RosAdapter:
         self.rear_clear, self.last_raw = False, 0.
         self.last_raw_stamp = -1.
         self.motion_process, self.action_handle = None, None
+        self.pending_goal = None
         self.audit_file = None
         self.closed = threading.Event()
         self.tf = Buffer()
@@ -357,28 +358,52 @@ class RosAdapter:
         return future.result()
 
     async def action(self, client, goal, timeout):
+        if self.pending_goal is not None or self.action_handle is not None:
+            raise ValueError('上一次Nav2目标尚未确认结束，请重启观测后重试')
         if not client.server_is_ready():
             raise ValueError('Nav2 action未就绪')
-        send = client.send_goal_async(goal)
-        handle = None
+        self.pending_goal = client.send_goal_async(goal)
         try:
-            handle = await self.future(send)
+            handle = await self.receive_goal()
             if not handle.accepted:
                 raise ValueError('Nav2拒绝目标')
-            self.action_handle = handle
             result = await self.future(handle.get_result_async(), timeout)
+            if result.status in (4, 5, 6):
+                self.action_handle = None
             if result.status != 4:
                 raise ValueError('Nav2执行失败或取消：'+str(result.status))
             return result.result
         except BaseException:
-            if handle is not None:
-                await self.future(handle.cancel_goal_async())
-            else:
-                send.add_done_callback(lambda f: f.result().cancel_goal_async() if not f.exception() and f.result().accepted else None)
+            await self.cancel_action()
             raise
-        finally:
-            if self.action_handle is handle:
-                self.action_handle = None
+
+    async def receive_goal(self):
+        handle = await self.future(self.pending_goal)
+        self.pending_goal = None
+        if handle.accepted:
+            self.action_handle = handle
+        return handle
+
+    async def cancel_action(self):
+        try:
+            if self.pending_goal is not None:
+                await self.receive_goal()
+            handle = self.action_handle
+            if handle is None:
+                return
+            result = handle.get_result_async()
+            response = await self.future(handle.cancel_goal_async())
+            # CancelGoal: 0 means CANCELING, 3 means already terminal. Neither
+            # replaces the terminal result; retain the handle until confirmed.
+            if response.return_code not in (0, 3):
+                raise ValueError('Nav2取消目标被拒绝：'+str(response.return_code))
+            terminal = await self.future(result)
+            if terminal.status not in (4, 5, 6):
+                raise ValueError('Nav2取消后未确认目标终态')
+            self.action_handle = None
+        except (ValueError, TimeoutError) as exc:
+            # Cancellation failure is not a recoverable path-planning failure.
+            raise RuntimeError('Nav2取消未确认：'+str(exc)) from exc
 
     def stamped_pose(self, pose):
         from geometry_msgs.msg import PoseStamped
@@ -406,7 +431,7 @@ class RosAdapter:
         last = '未找到满足约束的路线'
         # This phase drives forward and turns in place only; ReverseGrid is
         # opt-in through the board-local config.
-        for planner in getattr(self, 'config', {}).get('planners', ['ForwardGrid']):
+        for planner in self.config.get('planners', ['ForwardGrid']):
             if planner not in ('ForwardGrid', 'ReverseGrid'):
                 raise ValueError('未知规划器：'+str(planner))
             for yaw in headings:
@@ -441,6 +466,8 @@ class RosAdapter:
         self.permit_pub.publish(Bool(data=bool(enabled)))
 
     async def arm(self):
+        if self.pending_goal is not None or self.action_handle is not None:
+            raise ValueError('上一次Nav2目标尚未确认结束，请重启观测后重试')
         from ament_index_python.packages import get_package_share_directory,get_package_prefix
         if not self.stationary() or any(c==5 and time.monotonic()-t<1. for t,c,_ in self.events):
             raise ValueError('未满足API0停稳条件或存在其他CAN发送者')
@@ -486,9 +513,8 @@ class RosAdapter:
 
     async def stop(self):
         self.permit(False)
-        if self.action_handle is not None:
-            await self.future(self.action_handle.cancel_goal_async())
         try:
+            await self.cancel_action()
             await self.wait_stationary()
         finally:
             process, self.motion_process = self.motion_process, None

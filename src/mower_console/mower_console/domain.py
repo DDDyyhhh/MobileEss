@@ -292,11 +292,25 @@ class Console:
     async def drive(self, plan, segment, track):
         """Run one segment. False means a live obstacle stopped it."""
         running = asyncio.create_task(self.adapter.execute_segment(segment))
+        cancelling = False
         try:
             while not running.done():
                 snapshot = self.guard(plan, track)
                 if snapshot.get('obstacle_blocked'):
                     self.task['obstacle_reason'] = snapshot.get('gate_reason') or '障碍进入预测通行范围'
+                    cancelling = True
+                    running.cancel()
+                    # Do not renew a lease while the old action may still move.
+                    # Fail before the 250 ms lease expires if cancellation is slow.
+                    done, _ = await asyncio.wait({running}, timeout=.15)
+                    if not done:
+                        self.adapter.permit(False)
+                        raise Refused('Nav2取消分段超时，任务停止；请重新预览')
+                    try:
+                        running.result()
+                    except asyncio.CancelledError:
+                        pass
+                    self.guard(plan, track)
                     return False
                 if distance_to_path(segment['poses'], snapshot['pose'][:2]) > .2:
                     raise Refused('偏离预览路线超过20厘米')
@@ -315,7 +329,8 @@ class Console:
             return True
         finally:
             if not running.done():
-                running.cancel()
+                if not cancelling:
+                    running.cancel()
                 await asyncio.gather(running, return_exceptions=True)
 
     async def clear_or_detour(self, plan, route, index, track):

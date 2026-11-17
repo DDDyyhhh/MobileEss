@@ -35,6 +35,7 @@ async def test_route_checks_leave_the_event_loop_available(monkeypatch):
                                                  orientation=None)) for x in (0., 1.)]))
 
     adapter = SimpleNamespace(assets=SimpleNamespace(grid=Grid()),
+                              config={},
                               snapshot=lambda: {'pose': [0., 0., 0.]},
                               stamped_pose=lambda p: p, yaw=lambda _: 0.,
                               action=action, compute=None, reverse_compute=None)
